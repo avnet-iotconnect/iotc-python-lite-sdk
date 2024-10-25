@@ -1,0 +1,12 @@
+# Development IDEs
+/.idea/
+/.vscode/
+
+# Python Virtual Environment while devloping etc.
+/.venv/
+
+# This will be generated when mking an editable install
+src/iotconnect_sdk_lite.egg-info/
+
+# The version should be dynamically generated and placed into this file
+/src/avnet/iotconnect/sdk/lite/_version.py

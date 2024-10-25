@@ -1,2 +1,3 @@
-# iotc-pythoin-lite-sdk
-Avnet IoTConnect Python Liteweight SDK
+# iotc-python-lite-sdk
+Avnet IoTConnect Python LightWeight SDK
+
