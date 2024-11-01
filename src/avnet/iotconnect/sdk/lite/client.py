@@ -1,14 +1,23 @@
 import json
+import random
+import time
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from multiprocessing.managers import Value
-from typing import TypeVar
+from enum import Enum
 
 import paho.mqtt.client
+from paho.mqtt.client import Client as PahoClient, MQTT_ERR_UNKNOWN
+from paho.mqtt.enums import CallbackAPIVersion
+from .config import DeviceConfig
+
+from avnet.iotconnect.sdk.sdklib.dra import DraDiscoveryUrl,DiscoveryResponseData, \
+    DraIdentityUrl, IdentityResponseData
 
 # When type "object" is defined in IoTConnect, it cannot have nested objects inside of it.
 type TelemetryValueObjectType = dict[str, None | str | int | float | bool | tuple[float, float]]
 type TelemetryValueType = None | str | int | float | bool | tuple[float, float] | TelemetryValueObjectType
+
 
 class TelemetryValues(dict[str, TelemetryValueType]):
     def __init__(self, *args, **kwargs):
@@ -24,7 +33,7 @@ class TelemetryValues(dict[str, TelemetryValueType]):
                     raise ValueError("Not lat/long", key, "=", value)
                 else:
                     return True
-            return False # not primitive or latlong
+            return False  # not primitive or latlong
 
         if not isinstance(key, str):
             raise ValueError("Bad key type")
@@ -49,18 +58,7 @@ class TelemetryValues(dict[str, TelemetryValueType]):
             self[k] = v
 
 
-@dataclass
-class DeviceConfig:
-    """
-    =param env: Your account environment. You can locate this in you IoTConnect web UI at Settings -> Key Value
-    """
-    env: str
-    cpid: str
-    duid: str
-    device_cert_path: str
-    device_pkey_path: str
-    server_ca_cert_path: str = None
-    platform: str = "aws"
+
 
 
 @dataclass
@@ -75,19 +73,34 @@ class TelemetryRecord:
         self.timestamp = Client.timestamp_now()
         return self
 
+class C2DmessageType(Enum):
+    COMMAND = 0
+    OTA = 1
+    MODULE_COMMAND = 2
 
 
-def on_connect(mqttc: paho.mqtt.client.Client, obj, flags, reason_code, properties):
-    print("reason_code: " + str(reason_code))
+@dataclass
+class C2DMessagePacket:
+    ack: str
+    ct: int
+    cmd: str
+    sw: str
+    hw: str
+    urls: dict[str, dict[str, str]]
 
 
-def on_message(mqttc: paho.mqtt.client.Client, obj, msg):
-    print(msg.topic + " " + str(msg.qos) + " " + str(msg.payload))
+class C2dMessage:
+    def __init__(self, packet: C2DMessagePacket):
+        self.message_type = packet.ct
+        self.ack_id = packet.ack
+        cmd_split = packet.cmd.split()
+        self.command_name = cmd_split[0]
+        self.command_args = cmd_split[1:]
 
-
-def on_publish(mqttc: paho.mqtt.client.Client, obj, mid, reason_code, properties):
-    print("mid: " + str(mid))
-
+    def apply_timestamp(self):
+        """ Timestamps this TelemetryEntry with the current timestamp """
+        self.timestamp = Client.timestamp_now()
+        return self
 
 
 class Client:
@@ -99,18 +112,49 @@ class Client:
 
     def __init__(self, config: DeviceConfig):
         self.config = config
-        self.mqttc = paho.mqtt.client.Client(paho.mqtt.client.CallbackAPIVersion.VERSION2)
-        self.mqttc.on_message = on_message
-        self.mqttc.on_connect = on_connect
-        self.mqttc.on_publish = on_publish
+        print(DraDiscoveryUrl(config).get_api_url())
+        resp = urllib.request.urlopen(urllib.request.Request(DraDiscoveryUrl(config).get_api_url()))
+        response_data = DiscoveryResponseData.from_json(json.loads(resp.read()))
+        resp = urllib.request.urlopen(DraIdentityUrl(response_data.d.bu).get_uid_api_url(config))
+        response_data = IdentityResponseData.from_json(json.loads(resp.read()))
+        self.mqtt_config = response_data.d.mqtt_data
 
+        self.mqtt = PahoClient(
+            callback_api_version=CallbackAPIVersion.VERSION2,
+            client_id=self.mqtt_config.id
+        )
+        self.mqtt.username = self.mqtt_config.un
 
+        self.mqtt.on_message = self.on_message
+        self.mqtt.on_connect = self.on_connect
+        self.mqtt.on_publish = self.on_publish
+
+        self.mqtt.tls_set(certfile=config.device_cert_path, keyfile=config.device_pkey_path)
 
     def connect(self):
-        mqtt_error = self.mqttc.connect(
-            host="x",
-            port=8883
-        )
+        while True:
+            try:
+                mqtt_error = self.mqtt.connect(
+                    host=self.mqtt_config.h,
+                    port=8883
+                )
+                if mqtt_error != paho.mqtt.client.MQTT_ERR_SUCCESS:
+                    print("Failed to connect")
+                else:
+                    print("MQTT connected")
+                    break # break the loop
+
+            except Exception as ex:
+                self._mqtt_status = MQTT_ERR_UNKNOWN
+                print("Failed to connect to host %s. Exception: %s" % (self.mqtt_config.h, str(ex)))
+
+            backoff_ms = random.randrange(1000, 15000)
+            print("Backing off for %d ms." % backoff_ms)
+            # Jitter back off a random number of milliseconds between 1 and 10 seconds.
+            time.sleep(backoff_ms / 1000)
+
+        self.mqtt.subscribe(self.mqtt_config.topics.c2d, qos=1)
+
 
     def send_telemetry(self, values: dict[str, TelemetryValueType], timestamp: datetime = None):
         """ Sends a single telemetry dataset. 
@@ -153,12 +197,21 @@ class Client:
 
         """
 
-        print(self._to_iotconenct_json(records))
+        iotc_json = self._to_iotconenct_json(records)
+        if not self.mqtt.is_connected():
+            print('Message NOT sent. Not connected!')
+        else:
+            self.mqtt.publish(
+                topic=self.mqtt_config.topics.rpt,
+                qos=1,
+                payload=iotc_json
+            )
+            print(iotc_json)
 
     def _to_iotconenct_json(self, records: list[TelemetryRecord]) -> str:
         def to_iotconnect_data(r: TelemetryRecord):
             iotc_record_json = {
-                'd' : r.values
+                'd': r.values
             }
 
             if r.timestamp:
@@ -180,6 +233,16 @@ class Client:
             t['d'].append(dict(to_iotconnect_data(entry)))
         return json.dumps(t)
 
+    def _process_c2d_mesage(self, tpic: str, payload: str):
+        pass
 
+    def on_connect(self, mqttc: PahoClient, obj, flags, reason_code, properties):
+        print("reason_code: " + str(reason_code))
 
+    def on_message(self, mqttc: PahoClient, obj, msg):
+        print(msg.topic + " " + str(msg.qos) + " " + str(msg.payload))
+        self._process_c2d_mesage(msg.topic, msg.payload)
+
+    def on_publish(self, mqttc: PahoClient, obj, mid, reason_code, properties):
+        print("mid: " + str(mid))
 

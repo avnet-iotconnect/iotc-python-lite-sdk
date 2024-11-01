@@ -7,28 +7,21 @@ from avnet.iotconnect.sdk.sdklib.dra.identity_data import MqttData, MetaData
 from .discovery_data import DiscoveryResponseData
 from .identity_data import IdentityResponseData, MqttData
 from ..util import to_json
+from ...lite.config import DeviceConfig, DeviceConfigError
 
 
-# Parses and extracts device configuration from IdentityResponse
-# Throws DeviceConfigError if parsing encounters an issue
-
-class DeviceConfigError(Exception):
-    def __init__(self, message: str):
-        self.msg = message
-        super().__init__(message)
-
-class DraDeviceConfig:
-    def __init__(self, platform: str = None, env: str = None, cpid: str = None, duid: str = None):
-        # TODO: validate args
-        self.env = env
-        self.cpid = cpid
-        self.duid = duid
-        self.platform = platform
-        self.validate()
-
-    def validate(self):
-        # TODO: implement
-        pass
+# class DraDeviceConfig:
+#     def __init__(self, platform: str = None, env: str = None, cpid: str = None, duid: str = None):
+#         # TODO: validate args
+#         self.env = env
+#         self.cpid = cpid
+#         self.duid = duid
+#         self.platform = platform
+#         self.validate()
+#
+#     def validate(self):
+#         # TODO: implement
+#         pass
 
 
 class DeviceIdentityData:
@@ -46,36 +39,25 @@ class DeviceIdentityData:
 
 class DraDiscoveryUrl:
     method: str = "GET"  # To clarify that get should be used to parse the response
-    URL_FORMAT: Final[str] = "%s/api/v2.1/dsdk/cpId/%s/env/%s"
+    API_URL_FORMAT: Final[str] = "%s/api/v2.1/dsdk/cpId/%s/env/%s"
 
-    def get_discovery_url(self, config: DraDeviceConfig):
-        if self.base_url is None:
-            if config.platform == "az":
-                self.base_url = "https://discovery.iotconnect.io"
-            elif config.platform == "aws":
-                if config.env == "poc":
-                    self.base_url = "https://awsdiscovery.iotconnect.io"
-                else:
-                    self.base_url = "https://consolediscovery.iotconnect.io"
-            else:
-                raise DeviceConfigError("Invalid platform %s" % config.platform)
+    def get_api_url(self) -> str:
+        return DraDiscoveryUrl.API_URL_FORMAT % (self.config.discovery_url, self.config.cpid, self.config.env)
 
-        return DraDiscoveryUrl.URL_FORMAT % (self.base_url, config.cpid, config.env)
-
-    def __init__(self, base_url):
-        self.base_url = base_url
+    def __init__(self, config: DeviceConfig):
+        self.config = config
 
 
 class DraIdentityUrl:
-    URL_FORMAT: Final[str] = "%s/uid/%s"
+    UID_API_URL_FORMAT: Final[str] = "%s/uid/%s"
 
     def __init__(self, base_url):
         self.base_url = base_url
 
     method: str = "GET"  # To clarify that get should be used to parse the response
 
-    def get_identity_url(self, config: DraDeviceConfig):
-        return DraIdentityUrl.URL_FORMAT % (self.base_url, config.duid)
+    def get_uid_api_url(self, config: DeviceConfig) -> str:
+        return DraIdentityUrl.UID_API_URL_FORMAT % (self.base_url, config.duid)
 
     def _validate_identity_response(self, ird: IdentityResponseData):
         # TODO: validate and throw DeviceConfigError
