@@ -3,9 +3,9 @@ from pkgutil import get_data
 from typing import Final, Callable
 import json
 
-from avnet.iotconnect.sdk.sdklib.dra.identity_data import MqttData, MetaData
-from .discovery_data import DiscoveryResponseData
-from .identity_data import IdentityResponseData, MqttData
+from avnet.iotconnect.sdk.sdklib.dra.identity_json import MqttData, IotcMetaDataJson
+from .discovery_json import IotcDiscoveryResponseJson
+from .identity_json import IdentityResponseData, MqttData
 from ..util import to_json
 from ...lite.config import DeviceConfig, DeviceConfigError
 
@@ -25,7 +25,7 @@ from ...lite.config import DeviceConfig, DeviceConfigError
 
 
 class DeviceIdentityData:
-    def __init__(self, mqtt: MqttData, metadata: MetaData):
+    def __init__(self, mqtt: MqttData, metadata: IotcMetaDataJson):
         self.host = mqtt.h
         self.client_id = mqtt.id
         self.username = mqtt.un
@@ -80,7 +80,7 @@ class DraDeviceInfoParser:
     ]
 
     @classmethod
-    def _parsing_common(cls, what: str, rd: DiscoveryResponseData | IdentityResponseData):
+    def _parsing_common(cls, what: str, rd: IotcDiscoveryResponseJson | IdentityResponseData):
         """ Helper to parse either discovery or identity response common error fields """
 
         ec_message = 'not available'
@@ -112,9 +112,9 @@ class DraDeviceInfoParser:
     def parse_discovery_response(cls, discovery_response: str) -> str:
         """ Parses discovery response JSON and Returns base URL or raises DeviceConfigError """
 
-        drd: DiscoveryResponseData
+        drd: IotcDiscoveryResponseJson
         try:
-            drd = DiscoveryResponseData.from_json(json.loads(discovery_response))
+            drd = IotcDiscoveryResponseJson.from_dict(json.loads(discovery_response))
         except json.JSONDecodeError as json_error:
             raise DeviceConfigError("Discovery JSON Parsing Error: %s" % str(json_error))
         cls._parsing_common("Discovery", drd)
@@ -128,7 +128,7 @@ class DraDeviceInfoParser:
     def parse_identity_response(cls, identity_response: str) -> DeviceIdentityData:
         ird: IdentityResponseData
         try:
-            ird = IdentityResponseData.from_json(json.loads(identity_response))
+            ird = IdentityResponseData.from_dict(json.loads(identity_response))
         except json.JSONDecodeError as json_error:
             raise DeviceConfigError("Identity JSON Parsing Error: %s" % str(json_error))
         cls._parsing_common("Identity", ird)

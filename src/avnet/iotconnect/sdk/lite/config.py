@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 
@@ -19,6 +20,7 @@ class DeviceConfig:
     platform: str
     server_ca_cert_path: str = None
     _discovery_url: str = None
+
 
     @property
     def platform(self) -> str:
@@ -48,3 +50,4 @@ class DeviceConfig:
     @discovery_url.setter
     def discovery_url(self, v : str) -> None:
         self._discovery_url = v
+

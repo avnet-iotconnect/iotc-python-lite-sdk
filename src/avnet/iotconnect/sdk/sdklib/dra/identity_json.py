@@ -7,8 +7,17 @@ from typing import Any, Dict, Optional
 from ..util import to_json
 
 
-class MetaData:
-    def __init__(self, at: int = 0, df: int = 0, cd: str = '', gtw: Optional[str] = None, edge: int = 0, pf: int = 1, hwv: str = '', swv: str = '', v: float = 2.1):
+class IotcMetaDataJson:
+    def __init__(self,
+                 at: int = -1,
+                 df: int = -1,
+                 cd: str = None,
+                 gtw: str = None,
+                 edge: int = 0,
+                 pf: int = 1,
+                 hwv: str = '',
+                 swv: str = '',
+                 v: float = 2.1):
         self.at = at
         self.df = df
         self.cd = cd
@@ -20,17 +29,17 @@ class MetaData:
         self.v = v
 
     @classmethod
-    def from_json(cls, data: Dict[str, Any]) -> 'MetaData':
+    def from_dict(cls, data: Dict[str, Any]) -> 'IotcMetaDataJson':
         return cls(
-            at=data.get('at', 0),
-            df=data.get('df', 0),
-            cd=data.get('cd', ''),
+            at=data.get('at'),
+            df=data.get('df'),
+            cd=data.get('cd'),
             gtw=data.get('gtw'),
-            edge=data.get('edge', 0),
-            pf=data.get('pf', 1),
-            hwv=data.get('hwv', ''),
-            swv=data.get('swv', ''),
-            v=data.get('v', 2.1)
+            edge=data.get('edge'),
+            pf=data.get('pf'),
+            hwv=data.get('hwv'),
+            swv=data.get('swv'),
+            v=data.get('v',)
         )
 
 class HasAttributes:
@@ -42,7 +51,7 @@ class HasAttributes:
         self.ota = ota
 
     @classmethod
-    def from_json(cls, data: Dict[str, Any]) -> 'HasAttributes':
+    def from_dict(cls, data: Dict[str, Any]) -> 'HasAttributes':
         return cls(
             d=data.get('d', 0),
             attr=data.get('attr', 0),
@@ -60,7 +69,7 @@ class PropertyTopics:
         self.subForAll = sub_for_all
 
     @classmethod
-    def from_json(cls, data: Dict[str, Any]) -> 'PropertyTopics':
+    def from_dict(cls, data: Dict[str, Any]) -> 'PropertyTopics':
         return cls(
             pub=data.get('pub', ''),
             sub=data.get('sub', ''),
@@ -81,7 +90,7 @@ class Topics:
         self.property_topics = property_topics if property_topics is not None else PropertyTopics()
 
     @classmethod
-    def from_json(cls, data: Dict[str, Any]) -> 'Topics':
+    def from_dict(cls, data: Dict[str, Any]) -> 'Topics':
         property_topics_data = data.get('set', {})
         return cls(
             rpt=data.get('rpt', ''),
@@ -92,7 +101,7 @@ class Topics:
             dl=data.get('dl', ''),
             di=data.get('di', ''),
             c2d=data.get('c2d', ''),
-            property_topics=PropertyTopics.from_json(property_topics_data)
+            property_topics=PropertyTopics.from_dict(property_topics_data)
         )
 
 class MqttData:
@@ -105,33 +114,33 @@ class MqttData:
         self.topics = topics if topics is not None else Topics()
 
     @classmethod
-    def from_json(cls, data: Dict[str, Any]) -> 'MqttData':
+    def from_dict(cls, data: Dict[str, Any]) -> 'MqttData':
         return cls(
             n=data.get('n', ''),
             h=data.get('h', ''),
             p=data.get('p', 0),
             id_=data.get('id', ''),
             un=data.get('un', ''),
-            topics=Topics.from_json(data.get('topics', {}))
+            topics=Topics.from_dict(data.get('topics', {}))
         )
 
 class DeviceData:
-    def __init__(self, ec: int = 0, ct: int = 0, meta: MetaData = None, has: HasAttributes = None, p: MqttData = None, dt: str = ''):
+    def __init__(self, ec: int = 0, ct: int = 0, meta: IotcMetaDataJson = None, has: HasAttributes = None, p: MqttData = None, dt: str = ''):
         self.ec = ec
         self.ct = ct
-        self.metadata = meta if meta is not None else MetaData()
+        self.metadata = meta if meta is not None else IotcMetaDataJson()
         self.has = has if has is not None else HasAttributes()
         self.mqtt_data = p if p is not None else MqttData()
         self.dt = dt
 
     @classmethod
-    def from_json(cls, data: Dict[str, Any]) -> 'DeviceData':
+    def from_dict(cls, data: Dict[str, Any]) -> 'DeviceData':
         return cls(
             ec=data.get('ec', 0),
             ct=data.get('ct', 0),
-            meta=MetaData.from_json(data.get('meta', {})),
-            has=HasAttributes.from_json(data.get('has', {})),
-            p=MqttData.from_json(data.get('p', {})),
+            meta=IotcMetaDataJson.from_dict(data.get('meta', {})),
+            has=HasAttributes.from_dict(data.get('has', {})),
+            p=MqttData.from_dict(data.get('p', {})),
             dt=data.get('dt', '')
         )
 
@@ -142,9 +151,9 @@ class IdentityResponseData:
         self.message = message
 
     @classmethod
-    def from_json(cls, data: Dict[str, Any]) -> 'IdentityResponseData':
+    def from_dict(cls, data: Dict[str, Any]) -> 'IdentityResponseData':
         return cls(
-            d=DeviceData.from_json(data.get('d', {})),
+            d=DeviceData.from_dict(data.get('d', {})),
             status=data.get('status', 0),
             message=data.get('message', 'Success')
         )
@@ -155,5 +164,5 @@ if __name__ == '__main__':
     # unit test
     json_data = '{"d":{"ec":0,"ct":200,"meta":{"at":2,"df":60,"cd":"ABCDN8E","gtw":null,"edge":0,"pf":1,"hwv":"","swv":"","v":2.1},"has":{"d":0,"attr":1,"set":0,"r":0,"ota":0},"p":{"n":"mqtt","h":"poc-iotconnect-iothub-017-eu2.azure-devices.net","p":8883,"id":"mydevice","un":"poc-iotconnect-iothub-017-eu2.azure-devices.net/mydevice/?api-version=2018-06-30","topics":{"rpt":"devices/mydevice/messages/events/cd=7LIBN8E&v=2.1&mt=0&$.ct=application%2Fjson&$.ce=utf-8","flt":"devices/mydevice/messages/events/cd=7LIBN8E&v=2.1&mt=3&$.ct=application%2Fjson&$.ce=utf-8","od":"devices/mydevice/messages/events/cd=7LIBN8E&v=2.1&mt=4&$.ct=application%2Fjson&$.ce=utf-8","hb":"devices/mydevice/messages/events/cd=7LIBN8E&v=2.1&mt=5&$.ct=application%2Fjson&$.ce=utf-8","ack":"devices/mydevice/messages/events/cd=7LIBN8E&v=2.1&mt=6&$.ct=application%2Fjson&$.ce=utf-8","dl":"devices/mydevice/messages/events/cd=7LIBN8E&v=2.1&mt=7&$.ct=application%2Fjson&$.ce=utf-8","di":"devices/mydevice/messages/events/cd=7LIBN8E&v=2.1&di=1&$.ct=application%2Fjson&$.ce=utf-8","c2d":"devices/mydevice/messages/devicebound/#","set":{"pub":"$iothub/twin/PATCH/properties/reported/?$rid={version}","sub":"$iothub/twin/PATCH/properties/desired/#","pubForAll":"$iothub/twin/GET/?$rid=0","subForAll":"$iothub/twin/res/#"}}},"dt":"2024-10-25T20:57:57.481Z"},"status":200,"message":"Device info loaded successfully."}'
     jd = json.loads(json_data)
-    response = IdentityResponseData.from_json(jd)
+    response = IdentityResponseData.from_dict(jd)
     print("Json = ", to_json(response))
