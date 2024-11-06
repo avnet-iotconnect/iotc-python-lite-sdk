@@ -36,9 +36,9 @@ if __name__ == '__main__':
     while True:
         if not c.is_connected():
             print('(re)connecting...')
-            # c.connect()
+            c.connect()
             # c._aws_qualification_start(['t2wlntge8x69qa.deviceadvisor.iot.eu-west-1.amazonaws.com'])
-            c._aws_qualification_start(["tab0656391t2wlntge8x69qa.deviceadvisor.iot.eu-west-1.amazonaws.com"])
+            # c._aws_qualification_start(["tab0656391t2wlntge8x69qa.deviceadvisor.iot.eu-west-1.amazonaws.com"])
 
 
         # send simple data using a dict initializer

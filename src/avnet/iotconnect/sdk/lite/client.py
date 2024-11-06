@@ -44,12 +44,6 @@ class Timing:
             print("timing: ", ret)
         return ret
 
-
-class TelemetryValidator(dict[str, TelemetryValueType]):
-    # def __init__(self, *args, **kwargs):
-    # super(TelemetryValues, self).__init__()
-    # self.update(*args, **kwargs)
-
     def __setitem__(self, key, value):
         def check_primitive_or_latlong(value) -> bool:
             if isinstance(value, (None, str, int, float, bool)):
@@ -75,13 +69,6 @@ class TelemetryValidator(dict[str, TelemetryValueType]):
 
         else:
             raise ValueError("Bad type for key", key, type(value))
-
-        super().__setitem__(key, value)
-
-    # def update(self, *args, **kwargs):
-    #     print('update', args, kwargs)
-    #     for k, v in dict(*args, **kwargs).items():
-    #         self[k] = v
 
 
 @dataclass
@@ -205,28 +192,16 @@ class Client:
         self.user_callbacks = callbacks or UserCallbacks()
 
     def is_connected(self):
-        # print('is_connected =', self.mqtt.is_connected())
         return self.mqtt.is_connected()
 
     def connect(self):
-        #got_disconnect = False
-
-        # def on_disconnected_while_connecting(mqttc: PahoClient, obj, flags: DisconnectFlags, reason_code: ReasonCode, properties):
-        #     nonlocal got_disconnect
-        #     got_disconnect = True
-
         def wait_for_connection() -> bool:
-            # nonlocal got_disconnect
-            got_disconnect = False
             connect_timer = Timing()
             print("waiting to connect...")
             while True:
                 if self.is_connected():
                     print("MQTT connected")
                     return True
-                # if got_disconnect:
-                #     return False
-                print(str(self.mqtt._state))
                 time.sleep(0.5)
                 if connect_timer.diff_now().seconds > 20:
                     print("Timed out.")
@@ -235,7 +210,7 @@ class Client:
 
         if self.is_connected():
             return
-        # self.mqtt.on_disconnect = on_disconnected_while_connecting
+
         for i in range(1, 100):
             try:
                 t = Timing()
@@ -262,7 +237,6 @@ class Client:
             # Jitter back off a random number of milliseconds between 1 and 10 seconds.
             time.sleep(backoff_ms / 1000)
 
-        # self.mqtt.on_disconnect = self.on_mqtt_disconnect
         self.mqtt.subscribe(self.mqtt_config.topics.c2d, qos=1)
 
     def disconnect(self) -> MQTTErrorCode:
@@ -390,7 +364,7 @@ class Client:
         t = Timing()
 
         def log_callback(client, userdata, level, buf):
-            print("%d [%s]: %s" % (t.diff_now().microseconds/1000, str(level), buf))
+            print("%d [%s]: %s" % (t.diff_now().microseconds / 1000, str(level), buf))
             t.lap(False)
 
         if len(command_args) >= 1:
@@ -403,13 +377,19 @@ class Client:
             self.mqtt.on_log = log_callback
             self.disconnect()
             while True:
+                connected_time = Timing()
                 if not self.is_connected():
                     print('(re)connecting to', self.mqtt_config.h)
                     self.connect()
-
-                self.send_telemetry({
-                    'qualification': 'true'
-                })
+                    connected_time.lap(False)  # reset the timer
+                else:
+                    if connected_time.diff_now().seconds > 60:
+                        print("Stayed connected for too long. resetting the connection")
+                        self.disconnect()
+                        continue
+                    self.send_telemetry({
+                        'qualification': 'true'
+                    })
                 time.sleep(5)
 
         else:
