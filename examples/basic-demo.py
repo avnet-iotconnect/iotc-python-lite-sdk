@@ -72,10 +72,14 @@ if __name__ == '__main__':
         c.send_telemetry({
             'sdk_version': SDK_VERSION,
             'random' : random.randint(0,100),
-            'nested' : {
-                'a' : 'Value A',
-                'b' : 'Value B'
-            }
+            'accel' : {
+                'x' : 'Value A',
+                'y' : 'Value 3',
+                'obj' : {
+                    'o': 2
+                }
+            },
+            'latlng' : [34, -43.22233]
         })
 
         # example of sending multiple telemetry records:

@@ -38,7 +38,7 @@ classifiers = [
     "Topic :: Internet",
 ]
 dependencies = [
-    "paho-mqtt>=2.0.0",
+    "paho-mqtt>=2.1.0",
 ]
 
 [project.urls]

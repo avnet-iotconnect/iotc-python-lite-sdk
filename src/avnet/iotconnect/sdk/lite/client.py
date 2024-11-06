@@ -4,18 +4,15 @@ import time
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
-from enum import Enum
 from json import JSONDecodeError
-from typing import Dict, Union, Callable, Any, Optional, Final, Protocol
+from typing import Union, Callable, Optional, Final
 
-from paho.mqtt.client import Client as PahoClient
 from paho.mqtt.client import CallbackAPIVersion, MQTTErrorCode
-from paho.mqtt.reasoncodes import ReasonCode
-
-from .config import DeviceConfig
+from paho.mqtt.client import Client as PahoClient
 
 from avnet.iotconnect.sdk.sdklib.dra import DraDiscoveryUrl, IotcDiscoveryResponseJson, \
     DraIdentityUrl, IdentityResponseData
+from .config import DeviceConfig
 
 # When type "object" is defined in IoTConnect, it cannot have nested objects inside of it.
 TelemetryValueObjectType = dict[str, Union[None, str, int, float, bool, tuple[float, float]]]
@@ -31,15 +28,15 @@ class Timing:
         now = datetime.now()
         ret = self.diff_with(now)
         self.t = now
-        return  ret
+        return ret
 
-    def diff_now(self)  -> timedelta:
+    def diff_now(self) -> timedelta:
         return datetime.now() - self.t
 
     def diff_with(self, t: datetime) -> timedelta:
         return t - self.t
 
-    def lap(self, do_print = True) -> timedelta:
+    def lap(self, do_print=True) -> timedelta:
         ret = self.diff_next()
         if do_print:
             print("timing: ", ret)
@@ -111,6 +108,7 @@ class C2dMessageType:
             return C2dMessageType.UNDEFINED
         return value
 
+
 @dataclass
 class IotcC2DMessageJson:
     urls: dict[str, dict[str, str]] = None
@@ -176,6 +174,7 @@ class Client:
             callbacks: UserCallbacks = None
     ):
         self.config = config
+        self.user_callbacks = callbacks
         print(DraDiscoveryUrl(config).get_api_url())
         t = Timing()
         resp = urllib.request.urlopen(urllib.request.Request(DraDiscoveryUrl(config).get_api_url()))
@@ -192,12 +191,13 @@ class Client:
         )
         # TODO: User configurable with defaults
         self.mqtt.connect_timeout = 10
-        self.mqtt.reconnect_delay_set(min_delay=1, max_delay=30)
+        self.mqtt.reconnect_delay_set(min_delay=1, max_delay=5)
         self.mqtt.tls_set(certfile=config.device_cert_path, keyfile=config.device_pkey_path)
         self.mqtt.username = self.mqtt_config.un
 
         self.mqtt.on_message = self.on_mqtt_message
         self.mqtt.on_connect = self.on_mqtt_connect
+        self.mqtt.on_disconnect = self.on_mqtt_disconnect
         self.mqtt.on_publish = self.on_mqtt_publish
 
         self.user_callbacks = callbacks or UserCallbacks()
@@ -207,49 +207,70 @@ class Client:
         return self.mqtt.is_connected()
 
     def connect(self):
-        t = Timing()
+        got_disconnect = False
+
+        def on_disconnected_while_connecting(mqttc: PahoClient, obj, flags, reason_code, properties):
+            print("Got a disconnected while attempting connection:", str(reason_code))
+            nonlocal got_disconnect
+            got_disconnect = True
+
+        def wait_for_connection() -> bool:
+            nonlocal got_disconnect
+            got_disconnect = False
+            connect_timer = Timing()
+            print("waiting to connect...")
+            self.mqtt.on_disconnect = on_disconnected_while_connecting
+            while True:
+                if self.is_connected():
+                    print("MQTT connected")
+                    self.mqtt.on_disconnect = self.on_mqtt_disconnect
+                    return True
+                if got_disconnect:
+                    self.mqtt.on_disconnect = self.on_mqtt_disconnect
+                    return False
+                time.sleep(0.5)
+                if connect_timer.diff_now().seconds > 20:
+                    print("Timed out.")
+                    self.mqtt.on_disconnect = self.on_mqtt_disconnect
+                    return False
+
         if self.is_connected():
             return
 
-        while True:
+        for i in range(1, 100):
             try:
+                t = Timing()
+                self.disconnect()  # the mqtt loop may be running. Stop it.
                 mqtt_error = self.mqtt.connect(
                     host=self.mqtt_config.h,
                     port=8883
                 )
                 if mqtt_error != MQTTErrorCode.MQTT_ERR_SUCCESS:
-                    print("Failed to connect")
+                    print("TLS connection to the endpoint failed")
                 else:
-                    print("MQTT connecting...")
+                    print("Awaiting MQTT connection establishment...")
                     self.mqtt.loop_start()
-                    while True:
-                        if self.is_connected():
-                            print("MQTT connected")
-                            break
-                        else:
-                            time.sleep(0.5)
-                            print(".", end='')
-                        if t.diff_now().seconds > 60:
-                            print("Reconnecting for too long. Resetting the connection.")
-                            self.mqtt.disconnect()
-                            time.sleep(0.5)
-                            t.lap(do_print=False) # Just reset the "lap time" so we start ovr
-                            break  # to reconnect
+                    if wait_for_connection():
+                        print("Connected in %dms" % t.diff_now())
+                        break
+                    else:
+                        continue
 
-                    break  # break the loop
-                t.lap()
             except Exception as ex:
                 print("Failed to connect to host %s. Exception: %s" % (self.mqtt_config.h, str(ex)))
 
             backoff_ms = random.randrange(1000, 15000)
-            print("Backing off for %d ms." % backoff_ms)
+            print("Retrying connection... Backing off for %d ms." % backoff_ms)
             # Jitter back off a random number of milliseconds between 1 and 10 seconds.
             time.sleep(backoff_ms / 1000)
 
+        self.mqtt.on_disconnect = self.on_mqtt_disconnect
         self.mqtt.subscribe(self.mqtt_config.topics.c2d, qos=1)
 
     def disconnect(self) -> MQTTErrorCode:
-        return self.mqtt.disconnect()
+        ret = self.mqtt.disconnect()
+        print("Disconnected.")
+        return ret
 
     def send_telemetry(self, values: dict[str, TelemetryValueType], timestamp: datetime = None):
         """ Sends a single telemetry dataset. 
@@ -329,7 +350,7 @@ class Client:
         return json.dumps(t, separators=(',', ':'))
 
     def _process_c2d_message(self, topic: str, payload: str) -> bool:
-        #msg: C2dMessage = None
+        # msg: C2dMessage = None
         try:
             j = json.loads(payload)
             pkt = IotcC2DMessageJson.from_dict(j)
@@ -352,9 +373,11 @@ class Client:
             print('Error: Incoming message not parseable: "%s"' % payload)
             return False
 
-
     def on_mqtt_connect(self, mqttc: PahoClient, obj, flags, reason_code, properties):
-        print("reason_code: " + str(reason_code))
+        print("Connected. Reason Code: " + str(reason_code))
+
+    def on_mqtt_disconnect(self, mqttc: PahoClient, obj, flags, reason_code, properties):
+        print("Disconnected. Reason Code: " + str(reason_code))
 
     def on_mqtt_message(self, mqttc: PahoClient, obj, msg):
         print(msg.topic + " " + str(msg.qos) + " " + str(msg.payload))
@@ -365,8 +388,11 @@ class Client:
         pass
 
     def _aws_qualification_start(self, command_args: list[str]):
+        t = Timing()
+
         def log_callback(client, userdata, level, buf):
-            print(buf)
+            print("%d [%s]: %s" % (t.diff_now().microseconds/1000, level, buf))
+            t.lap(False)
 
         if len(command_args) >= 1:
             host = command_args[0]
