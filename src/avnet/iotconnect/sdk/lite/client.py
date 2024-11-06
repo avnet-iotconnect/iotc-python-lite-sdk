@@ -5,10 +5,12 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from json import JSONDecodeError
+from ssl import SSLError
 from typing import Union, Callable, Optional, Final
 
-from paho.mqtt.client import CallbackAPIVersion, MQTTErrorCode
+from paho.mqtt.client import CallbackAPIVersion, MQTTErrorCode, DisconnectFlags
 from paho.mqtt.client import Client as PahoClient
+from paho.mqtt.reasoncodes import ReasonCode
 
 from avnet.iotconnect.sdk.sdklib.dra import DraDiscoveryUrl, IotcDiscoveryResponseJson, \
     DraIdentityUrl, IdentityResponseData
@@ -207,40 +209,36 @@ class Client:
         return self.mqtt.is_connected()
 
     def connect(self):
-        got_disconnect = False
+        #got_disconnect = False
 
-        def on_disconnected_while_connecting(mqttc: PahoClient, obj, flags, reason_code, properties):
-            print("Got a disconnected while attempting connection:", str(reason_code))
-            nonlocal got_disconnect
-            got_disconnect = True
+        # def on_disconnected_while_connecting(mqttc: PahoClient, obj, flags: DisconnectFlags, reason_code: ReasonCode, properties):
+        #     nonlocal got_disconnect
+        #     got_disconnect = True
 
         def wait_for_connection() -> bool:
-            nonlocal got_disconnect
+            # nonlocal got_disconnect
             got_disconnect = False
             connect_timer = Timing()
             print("waiting to connect...")
-            self.mqtt.on_disconnect = on_disconnected_while_connecting
             while True:
                 if self.is_connected():
                     print("MQTT connected")
-                    self.mqtt.on_disconnect = self.on_mqtt_disconnect
                     return True
-                if got_disconnect:
-                    self.mqtt.on_disconnect = self.on_mqtt_disconnect
-                    return False
+                # if got_disconnect:
+                #     return False
+                print(str(self.mqtt._state))
                 time.sleep(0.5)
                 if connect_timer.diff_now().seconds > 20:
                     print("Timed out.")
-                    self.mqtt.on_disconnect = self.on_mqtt_disconnect
+                    self.disconnect()
                     return False
 
         if self.is_connected():
             return
-
+        # self.mqtt.on_disconnect = on_disconnected_while_connecting
         for i in range(1, 100):
             try:
                 t = Timing()
-                self.disconnect()  # the mqtt loop may be running. Stop it.
                 mqtt_error = self.mqtt.connect(
                     host=self.mqtt_config.h,
                     port=8883
@@ -251,12 +249,12 @@ class Client:
                     print("Awaiting MQTT connection establishment...")
                     self.mqtt.loop_start()
                     if wait_for_connection():
-                        print("Connected in %dms" % t.diff_now())
+                        print("Connected in %dms" % (t.diff_now().microseconds / 1000))
                         break
                     else:
                         continue
 
-            except Exception as ex:
+            except (SSLError, TimeoutError) as ex:
                 print("Failed to connect to host %s. Exception: %s" % (self.mqtt_config.h, str(ex)))
 
             backoff_ms = random.randrange(1000, 15000)
@@ -264,7 +262,7 @@ class Client:
             # Jitter back off a random number of milliseconds between 1 and 10 seconds.
             time.sleep(backoff_ms / 1000)
 
-        self.mqtt.on_disconnect = self.on_mqtt_disconnect
+        # self.mqtt.on_disconnect = self.on_mqtt_disconnect
         self.mqtt.subscribe(self.mqtt_config.topics.c2d, qos=1)
 
     def disconnect(self) -> MQTTErrorCode:
@@ -376,8 +374,9 @@ class Client:
     def on_mqtt_connect(self, mqttc: PahoClient, obj, flags, reason_code, properties):
         print("Connected. Reason Code: " + str(reason_code))
 
-    def on_mqtt_disconnect(self, mqttc: PahoClient, obj, flags, reason_code, properties):
-        print("Disconnected. Reason Code: " + str(reason_code))
+    def on_mqtt_disconnect(self, mqttc: PahoClient, obj, flags: DisconnectFlags, reason_code: ReasonCode, properties):
+        # print("Disconnected. Reason: %s. Flags: %s" % (str(reason_code), str(flags)))
+        print("Disconnected")
 
     def on_mqtt_message(self, mqttc: PahoClient, obj, msg):
         print(msg.topic + " " + str(msg.qos) + " " + str(msg.payload))
@@ -391,7 +390,7 @@ class Client:
         t = Timing()
 
         def log_callback(client, userdata, level, buf):
-            print("%d [%s]: %s" % (t.diff_now().microseconds/1000, level, buf))
+            print("%d [%s]: %s" % (t.diff_now().microseconds/1000, str(level), buf))
             t.lap(False)
 
         if len(command_args) >= 1:

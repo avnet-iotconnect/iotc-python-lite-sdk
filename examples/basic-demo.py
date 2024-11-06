@@ -2,6 +2,7 @@ import random
 import time
 from dataclasses import dataclass, asdict
 
+import avnet.iotconnect.sdk.lite
 from avnet.iotconnect.sdk.lite import Client
 from avnet.iotconnect.sdk.lite import __version__ as SDK_VERSION
 from avnet.iotconnect.sdk.lite.client import DeviceConfig, UserCallbacks, C2dMessage, TelemetryRecord

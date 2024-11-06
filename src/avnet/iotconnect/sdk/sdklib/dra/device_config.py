@@ -1,12 +1,11 @@
-from array import ArrayType
-from pkgutil import get_data
-from typing import Final, Callable
 import json
+from array import ArrayType
+from typing import Final, Union
 
-from avnet.iotconnect.sdk.sdklib.dra.identity_json import MqttData, IotcMetaDataJson
+from avnet.iotconnect.sdk.sdklib.dra.identity_json import IotcMetaDataJson
+
 from .discovery_json import IotcDiscoveryResponseJson
 from .identity_json import IdentityResponseData, MqttData
-from ..util import to_json
 from ...lite.config import DeviceConfig, DeviceConfigError
 
 
@@ -65,7 +64,7 @@ class DraIdentityUrl:
 
 
 class DraDeviceInfoParser:
-    EC_RESPONSE_MAPPING: Final[ArrayType[str]] = [
+    EC_RESPONSE_MAPPING = [
         "OK – No Error",
         "Device not found. Device is not whitelisted to platform.",
         "Device is not active.",
@@ -80,7 +79,7 @@ class DraDeviceInfoParser:
     ]
 
     @classmethod
-    def _parsing_common(cls, what: str, rd: IotcDiscoveryResponseJson | IdentityResponseData):
+    def _parsing_common(cls, what: str, rd: Union[IotcDiscoveryResponseJson, IdentityResponseData]):
         """ Helper to parse either discovery or identity response common error fields """
 
         ec_message = 'not available'
