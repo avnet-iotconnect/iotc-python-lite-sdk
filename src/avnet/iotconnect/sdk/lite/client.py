@@ -1,5 +1,6 @@
 import json
 import random
+import socket
 import time
 import urllib.request
 from dataclasses import dataclass
@@ -229,7 +230,9 @@ class Client:
                     else:
                         continue
 
-            except (SSLError, TimeoutError) as ex:
+            except (SSLError, TimeoutError, OSError) as ex:
+                # OSError includes socket.gaierror when host could not be resolved
+                # This could also be temporary, so keep trying
                 print("Failed to connect to host %s. Exception: %s" % (self.mqtt_config.h, str(ex)))
 
             backoff_ms = random.randrange(1000, 15000)
