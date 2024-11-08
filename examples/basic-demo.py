@@ -2,10 +2,9 @@ import random
 import time
 from dataclasses import dataclass, asdict
 
-import avnet.iotconnect.sdk.lite
 from avnet.iotconnect.sdk.lite import Client
 from avnet.iotconnect.sdk.lite import __version__ as SDK_VERSION
-from avnet.iotconnect.sdk.lite.client import DeviceConfig, UserCallbacks, C2dMessage, TelemetryRecord
+from avnet.iotconnect.sdk.lite.client import DeviceConfig, Callbacks, C2dCommand, TelemetryRecord
 
 device_config = DeviceConfig(
     platform="aws",
@@ -14,7 +13,7 @@ device_config = DeviceConfig(
     duid="python-lite-sdk01",
     device_cert_path="device-cert.pem",
     device_pkey_path="device-pkey.pem"
-)
+    )
 
 @dataclass
 class ExampleAccelerometerData:
@@ -22,13 +21,18 @@ class ExampleAccelerometerData:
     y: float
     z: float
 
+acc = {
+    'x' : 1,
+    'y' : 3
+}
+
 @dataclass
 class ExampleSensorData:
     temperature: float
     humidity: float
     accel: ExampleAccelerometerData
 
-def on_command(msg: C2dMessage):
+def on_command(msg: C2dCommand):
     print("Received command", msg.command_name, msg.command_args)
     if msg.command_name == "set-user-led":
         if len(msg.command_args) == 3:
@@ -38,7 +42,7 @@ def on_command(msg: C2dMessage):
 
 c = Client(
     config=device_config,
-    callbacks=UserCallbacks(
+    callbacks=Callbacks(
         command_cb=on_command
     )
 )
@@ -46,8 +50,8 @@ if __name__ == '__main__':
     while True:
         if not c.is_connected():
             print('(re)connecting...')
-            #c.connect()
-            c._aws_qualification_start(['t2wlntge8x69qa.deviceadvisor.iot.eu-west-1.amazonaws.com'])
+            c.connect()
+            # c._aws_qualification_start(['t2wlntge8x69qa.deviceadvisor.iot.eu-west-1.amazonaws.com'])
 
 
         # send structured data

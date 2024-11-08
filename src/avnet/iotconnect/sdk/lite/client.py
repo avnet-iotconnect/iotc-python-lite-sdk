@@ -1,11 +1,11 @@
 import json
 import random
-import socket
 import time
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from json import JSONDecodeError
+from mimetypes import inited
 from ssl import SSLError
 from typing import Union, Callable, Optional, Final
 
@@ -15,61 +15,15 @@ from paho.mqtt.reasoncodes import ReasonCode
 
 from avnet.iotconnect.sdk.sdklib.dra import DraDiscoveryUrl, IotcDiscoveryResponseJson, \
     DraIdentityUrl, IdentityResponseData
+from avnet.iotconnect.sdk.sdklib import Timing
+
 from .config import DeviceConfig
+from ..sdklib.protocol.backend import IotcC2DMessageJson
 
 # When type "object" is defined in IoTConnect, it cannot have nested objects inside of it.
 TelemetryValueObjectType = dict[str, Union[None, str, int, float, bool, tuple[float, float]]]
 TelemetryValueType = Union[None, str, int, float, bool, tuple[float, float], TelemetryValueObjectType]
 TelemetryValues = dict[str, TelemetryValueType]
-
-
-class Timing:
-    def __init__(self):
-        self.t = datetime.now()
-
-    def diff_next(self) -> timedelta:
-        now = datetime.now()
-        ret = self.diff_with(now)
-        self.t = now
-        return ret
-
-    def diff_now(self) -> timedelta:
-        return datetime.now() - self.t
-
-    def diff_with(self, t: datetime) -> timedelta:
-        return t - self.t
-
-    def lap(self, do_print=True) -> timedelta:
-        ret = self.diff_next()
-        if do_print:
-            print("timing: ", ret)
-        return ret
-
-    def __setitem__(self, key, value):
-        def check_primitive_or_latlong(value) -> bool:
-            if isinstance(value, (None, str, int, float, bool)):
-                return True
-            elif isinstance(value, list):
-                if len(value) != 2:
-                    raise ValueError("Not lat/long", key, "=", value)
-                else:
-                    return True
-            return False  # not primitive or latlong
-
-        if not isinstance(key, str):
-            raise ValueError("Bad key type")
-
-        if check_primitive_or_latlong(value):
-            pass
-        elif isinstance(value, dict):
-            for k in value:
-                if not isinstance(k, str):
-                    raise ValueError("Bad key type")
-                if not check_primitive_or_latlong(value.get(k)):
-                    raise ValueError("Inner dictionary object must not be nested")
-
-        else:
-            raise ValueError("Bad type for key", key, type(value))
 
 
 @dataclass
@@ -84,7 +38,6 @@ class TelemetryRecord:
         self.timestamp = Client.timestamp_now()
         return self
 
-
 class C2dMessageType:
     # don't use actual enum because we want to allow "unknown" message types
     COMMAND: Final[int] = 0
@@ -98,29 +51,7 @@ class C2dMessageType:
             return C2dMessageType.UNDEFINED
         return value
 
-
-@dataclass
-class IotcC2DMessageJson:
-    urls: dict[str, dict[str, str]] = None
-    ct: int = None
-    cmd: str = None
-    sw: str = None
-    hw: str = None
-    ack: str = None
-
-    @classmethod
-    def from_dict(cls, data: dict):
-        return cls(
-            urls=data.get("urls"),
-            ct=data.get("ct"),
-            cmd=data.get("cmd"),
-            sw=data.get("sw"),
-            hw=data.get("hw"),
-            ack=data.get("ack")
-        )
-
-
-class C2dMessage:
+class C2dCommand:
     def __init__(self, packet: IotcC2DMessageJson):
         self.message_type = C2dMessageType.parse(packet.ct)
         self.ack_id = packet.ack
@@ -131,19 +62,40 @@ class C2dMessage:
             self.command_raw = packet.cmd
         else:
             self.command_name = None
-            self.command_args = None
-            self.command_raw = None
+            self.command_args = []
+            self.command_raw = ""
+
+class C2dOta:
+    class Url:
+        def __init__(self, entry: dict[str, str]):
+            self.url = entry['url']
+    def __init__(self, packet: IotcC2DMessageJson):
+        self.message_type = C2dMessageType.parse(packet.ct)
+        self.ack_id = packet.ack
+        if packet.urls is not None:
+            self.urls = packet.urls
+        else:
+            self.urls = []
+        if packet.cmd is not None:
+            cmd_split = packet.cmd.split()
+            self.command_name = cmd_split[0]
+            self.command_args = cmd_split[1:]
+            self.command_raw = packet.cmd
+        else:
+            self.command_name = None
+            self.command_args = []
+            self.command_raw = ""
 
 
-class UserCallbacks:
+class Callbacks:
     connected_cb: Callable = None,
-    command_cb: Optional[Callable[[C2dMessage], None]] = None
+    command_cb: Optional[Callable[[C2dCommand], None]] = None
     ota_cb: Callable = None
 
     def __init__(
             self,
             connected_cb=None,
-            command_cb: Optional[Callable[[C2dMessage], None]] = None,
+            command_cb: Optional[Callable[[C2dCommand], None]] = None,
             ota_cb=None
     ):
         self.connected_cb = connected_cb
@@ -151,8 +103,50 @@ class UserCallbacks:
         self.ota_cb = ota_cb
 
 
-class Client:
+class ClientSettings:
+    """ Optional settings that the user can use to control the MQTT connection behavior
 
+    """
+
+    def __init__(
+            self,
+            connect_timeout_secs: int = 30,
+            connect_tries: int = 100,
+            connect_backoff_secs: int = 10
+    ):
+        self.connect_timeout_secs = connect_timeout_secs
+        self.connect_tries = connect_tries
+        self.connect_backoff_secs = connect_backoff_secs
+        if connect_tries < 1:
+            raise ValueError("connect_tries must be greater than 1")
+        if connect_tries < 1:
+            raise ValueError("connect_tries must be greater than 1")
+
+
+class Client:
+    """
+
+    General usage flow:
+
+    * Use `connect()`, `connect_async()` or `connect_srv()` to connect to a broker
+    * Use `loop_start()` to set a thread running to call `loop()` for you.
+    * Or use `loop_forever()` to handle calling `loop()` for you in a blocking function.
+    * Or call `loop()` frequently to maintain network traffic flow with the broker
+    * Use `subscribe()` to subscribe to a topic and receive messages
+    * Use `publish()` to send messages
+    * Use `disconnect()` to disconnect from the broker
+
+    Data returned from the broker is made available with the use of callback
+    functions as described below.
+
+    :param CallbackAPIVersion callback_api_version: define the API version for user-callback (on_connect, on_publish,...).
+        This field is required and it's recommended to use the latest version (CallbackAPIVersion.API_VERSION2).
+        See each callback for description of API for each version. The file docs/migrations.rst contains details on
+        how to migrate between version.
+
+    :param str client_id: the unique client id string used when connecting to the
+
+    """
     @classmethod
     def timestamp_now(cls) -> datetime:
         """ Returns the UTC timestamp that can be used to stamp telemetry records """
@@ -161,10 +155,13 @@ class Client:
     def __init__(
             self,
             config: DeviceConfig,
-            callbacks: UserCallbacks = None
+            callbacks: Callbacks = None,
+            settings: ClientSettings = None
     ):
         self.config = config
-        self.user_callbacks = callbacks
+        self.user_callbacks = callbacks or Callbacks()
+        self.settings = settings or ClientSettings()
+
         print(DraDiscoveryUrl(config).get_api_url())
         t = Timing()
         resp = urllib.request.urlopen(urllib.request.Request(DraDiscoveryUrl(config).get_api_url()))
@@ -180,8 +177,7 @@ class Client:
             client_id=self.mqtt_config.id
         )
         # TODO: User configurable with defaults
-        self.mqtt.connect_timeout = 10
-        self.mqtt.reconnect_delay_set(min_delay=1, max_delay=5)
+        self.mqtt.reconnect_delay_set(min_delay=1, max_delay=int(self.settings.connect_timeout_secs / 2 + 1))
         self.mqtt.tls_set(certfile=config.device_cert_path, keyfile=config.device_pkey_path)
         self.mqtt.username = self.mqtt_config.un
 
@@ -190,7 +186,7 @@ class Client:
         self.mqtt.on_disconnect = self.on_mqtt_disconnect
         self.mqtt.on_publish = self.on_mqtt_publish
 
-        self.user_callbacks = callbacks or UserCallbacks()
+        self.user_callbacks = callbacks or Callbacks()
 
     def is_connected(self):
         return self.mqtt.is_connected()
@@ -204,7 +200,7 @@ class Client:
                     print("MQTT connected")
                     return True
                 time.sleep(0.5)
-                if connect_timer.diff_now().seconds > 20:
+                if connect_timer.diff_now().seconds > self.settings.connect_timeout_secs:
                     print("Timed out.")
                     self.disconnect()
                     return False
@@ -212,7 +208,7 @@ class Client:
         if self.is_connected():
             return
 
-        for i in range(1, 100):
+        for i in range(1, self.settings.connect_tries):
             try:
                 t = Timing()
                 mqtt_error = self.mqtt.connect(
@@ -330,7 +326,7 @@ class Client:
             j = json.loads(payload)
             pkt = IotcC2DMessageJson.from_dict(j)
             print("<", pkt)
-            msg = C2dMessage(pkt)
+            msg = C2dCommand(pkt)
             if msg.message_type == C2dMessageType.COMMAND:
                 if msg.command_name == 'aws-qualification-start':
                     self._aws_qualification_start(msg.command_args)

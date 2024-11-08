@@ -3,7 +3,7 @@ import time
 
 from avnet.iotconnect.sdk.lite import Client
 from avnet.iotconnect.sdk.lite import __version__ as SDK_VERSION
-from avnet.iotconnect.sdk.lite.client import DeviceConfig, UserCallbacks, C2dMessage
+from avnet.iotconnect.sdk.lite.client import DeviceConfig, Callbacks, C2dCommand
 
 device_config = DeviceConfig(
     platform="aws",
@@ -15,19 +15,20 @@ device_config = DeviceConfig(
 )
 
 
-def on_command(msg: C2dMessage):
+def on_command(msg: C2dCommand):
     print("Received command", msg.command_name, msg.command_args, msg.ack_id)
     if msg.command_name == "set-user-led":
         if len(msg.command_args) == 3:
             print("Setting User LED to R:%d G:%d B:%d" % (
-            int(msg.command_args[0]), int(msg.command_args[1]), int(msg.command_args[2])))
+                int(msg.command_args[0]), int(msg.command_args[1]), int(msg.command_args[2]))
+            )
         else:
             print("Expected three command arguments, but got", len(msg.command_args))
 
 
 c = Client(
     config=device_config,
-    callbacks=UserCallbacks(
+    callbacks=Callbacks(
         command_cb=on_command
     )
 )

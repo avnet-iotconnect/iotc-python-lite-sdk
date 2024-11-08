@@ -11,6 +11,7 @@ class DeviceConfigError(Exception):
 class DeviceConfig:
     """
     =param env: Your account environment. You can locate this in you IoTConnect web UI at Settings -> Key Value
+
     """
     env: str
     cpid: str
