@@ -1,7 +1,6 @@
 import json
 import random
 import time
-import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from json import JSONDecodeError
@@ -13,8 +12,7 @@ from paho.mqtt.client import Client as PahoClient
 from paho.mqtt.reasoncodes import ReasonCode
 
 from avnet.iotconnect.sdk.sdklib import Timing
-from avnet.iotconnect.sdk.sdklib.protocol import DraDiscoveryUrl, DraIdentityUrl, DraDeviceInfoParser
-from .config import DeviceConfig, DeviceConfigError
+from .config import DeviceConfig
 from .device_rest_api import DeviceRestApi
 from ..sdklib.protocol.mqtt import ProtocolC2dMessageJson
 
