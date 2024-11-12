@@ -123,27 +123,6 @@ class ClientSettings:
 
 class Client:
     """
-
-    General usage flow:
-
-    * Use `connect()`, `connect_async()` or `connect_srv()` to connect to a broker
-    * Use `loop_start()` to set a thread running to call `loop()` for you.
-    * Or use `loop_forever()` to handle calling `loop()` for you in a blocking function.
-    * Or call `loop()` frequently to maintain network traffic flow with the broker
-    * Use `subscribe()` to subscribe to a topic and receive messages
-    * Use `publish()` to send messages
-    * Use `disconnect()` to disconnect from the broker
-
-    Data returned from the broker is made available with the use of callback
-    functions as described below.
-
-    :param CallbackAPIVersion callback_api_version: define the API version for user-callback (on_connect, on_publish,...).
-        This field is required and it's recommended to use the latest version (CallbackAPIVersion.API_VERSION2).
-        See each callback for description of API for each version. The file docs/migrations.rst contains details on
-        how to migrate between version.
-
-    :param str client_id: the unique client id string used when connecting to the
-
     """
     @classmethod
     def timestamp_now(cls) -> datetime:
@@ -168,7 +147,7 @@ class Client:
         )
         # TODO: User configurable with defaults
         self.mqtt.reconnect_delay_set(min_delay=1, max_delay=int(self.settings.connect_timeout_secs / 2 + 1))
-        self.mqtt.tls_set(certfile=config.device_cert_path, keyfile=config.device_pkey_path)
+        self.mqtt.tls_set(certfile=config.device_cert_path, keyfile=config.device_pkey_path, ca_certs=config.server_ca_cert_path)
         self.mqtt.username = self.mqtt_config.username
 
         self.mqtt.on_message = self.on_mqtt_message

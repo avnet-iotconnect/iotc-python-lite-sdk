@@ -12,7 +12,7 @@ device_config = DeviceConfig(
     duid="python-lite-sdk01",
     device_cert_path="device-cert.pem",
     device_pkey_path="device-pkey.pem"
-)
+    )
 
 
 def on_command(msg: C2dCommand):
