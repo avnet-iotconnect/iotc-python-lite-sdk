@@ -1,30 +1,15 @@
 import json
-from array import ArrayType
+import urllib.parse
 from typing import Final, Union
 
-from avnet.iotconnect.sdk.sdklib.dra.identity_json import IotcMetaDataJson
-
-from .discovery_json import IotcDiscoveryResponseJson
-from .identity_json import IdentityResponseData, MqttData
+from .discovery import IotcDiscoveryResponseJson
+from .identity import ProtocolIdentityResponseJson, ProtocolIdentityPJson
+from .identity import ProtocolMetaJson
 from ...lite.config import DeviceConfig, DeviceConfigError
 
 
-# class DraDeviceConfig:
-#     def __init__(self, platform: str = None, env: str = None, cpid: str = None, duid: str = None):
-#         # TODO: validate args
-#         self.env = env
-#         self.cpid = cpid
-#         self.duid = duid
-#         self.platform = platform
-#         self.validate()
-#
-#     def validate(self):
-#         # TODO: implement
-#         pass
-
-
 class DeviceIdentityData:
-    def __init__(self, mqtt: MqttData, metadata: IotcMetaDataJson):
+    def __init__(self, mqtt: ProtocolIdentityPJson, metadata: ProtocolMetaJson):
         self.host = mqtt.h
         self.client_id = mqtt.id
         self.username = mqtt.un
@@ -41,7 +26,11 @@ class DraDiscoveryUrl:
     API_URL_FORMAT: Final[str] = "%s/api/v2.1/dsdk/cpId/%s/env/%s"
 
     def get_api_url(self) -> str:
-        return DraDiscoveryUrl.API_URL_FORMAT % (self.config.discovery_url, self.config.cpid, self.config.env)
+        return DraDiscoveryUrl.API_URL_FORMAT % (
+            self.config.discovery_url,
+            urllib.parse.quote(self.config.cpid, safe=''),
+            urllib.parse.quote(self.config.env, safe='')
+        )
 
     def __init__(self, config: DeviceConfig):
         self.config = config
@@ -56,9 +45,12 @@ class DraIdentityUrl:
     method: str = "GET"  # To clarify that get should be used to parse the response
 
     def get_uid_api_url(self, config: DeviceConfig) -> str:
-        return DraIdentityUrl.UID_API_URL_FORMAT % (self.base_url, config.duid)
+        return DraIdentityUrl.UID_API_URL_FORMAT % (
+            self.base_url,
+            urllib.parse.quote(config.duid, safe='')
+        )
 
-    def _validate_identity_response(self, ird: IdentityResponseData):
+    def _validate_identity_response(self, ird: ProtocolIdentityResponseJson):
         # TODO: validate and throw DeviceConfigError
         pass
 
@@ -79,7 +71,7 @@ class DraDeviceInfoParser:
     ]
 
     @classmethod
-    def _parsing_common(cls, what: str, rd: Union[IotcDiscoveryResponseJson, IdentityResponseData]):
+    def _parsing_common(cls, what: str, rd: Union[IotcDiscoveryResponseJson, ProtocolIdentityResponseJson]):
         """ Helper to parse either discovery or identity response common error fields """
 
         ec_message = 'not available'
@@ -113,7 +105,7 @@ class DraDeviceInfoParser:
 
         drd: IotcDiscoveryResponseJson
         try:
-            drd = IotcDiscoveryResponseJson.from_dict(json.loads(discovery_response))
+            drd = IotcDiscoveryResponseJson(json.loads(discovery_response))
         except json.JSONDecodeError as json_error:
             raise DeviceConfigError("Discovery JSON Parsing Error: %s" % str(json_error))
         cls._parsing_common("Discovery", drd)
@@ -125,12 +117,12 @@ class DraDeviceInfoParser:
 
     @classmethod
     def parse_identity_response(cls, identity_response: str) -> DeviceIdentityData:
-        ird: IdentityResponseData
+        ird: ProtocolIdentityResponseJson
         try:
-            ird = IdentityResponseData.from_dict(json.loads(identity_response))
+            ird = ProtocolIdentityResponseJson(json.loads(identity_response))
         except json.JSONDecodeError as json_error:
             raise DeviceConfigError("Identity JSON Parsing Error: %s" % str(json_error))
         cls._parsing_common("Identity", ird)
 
-        return DeviceIdentityData(ird.d.mqtt_data, ird.d.metadata)
+        return DeviceIdentityData(ird.d.p, ird.d.meta)
 

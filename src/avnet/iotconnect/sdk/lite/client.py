@@ -5,20 +5,18 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from json import JSONDecodeError
-from mimetypes import inited
 from ssl import SSLError
 from typing import Union, Callable, Optional, Final
 
-from paho.mqtt.client import CallbackAPIVersion, MQTTErrorCode, DisconnectFlags
+from paho.mqtt.client import CallbackAPIVersion, MQTTErrorCode, DisconnectFlags, MQTTMessageInfo
 from paho.mqtt.client import Client as PahoClient
 from paho.mqtt.reasoncodes import ReasonCode
 
-from avnet.iotconnect.sdk.sdklib.dra import DraDiscoveryUrl, IotcDiscoveryResponseJson, \
-    DraIdentityUrl, IdentityResponseData
 from avnet.iotconnect.sdk.sdklib import Timing
-
-from .config import DeviceConfig
-from ..sdklib.protocol.backend import IotcC2DMessageJson
+from avnet.iotconnect.sdk.sdklib.protocol import DraDiscoveryUrl, DraIdentityUrl, DraDeviceInfoParser
+from .config import DeviceConfig, DeviceConfigError
+from .device_rest_api import DeviceRestApi
+from ..sdklib.protocol.mqtt import ProtocolC2dMessageJson
 
 # When type "object" is defined in IoTConnect, it cannot have nested objects inside of it.
 TelemetryValueObjectType = dict[str, Union[None, str, int, float, bool, tuple[float, float]]]
@@ -52,7 +50,7 @@ class C2dMessageType:
         return value
 
 class C2dCommand:
-    def __init__(self, packet: IotcC2DMessageJson):
+    def __init__(self, packet: ProtocolC2dMessageJson):
         self.message_type = C2dMessageType.parse(packet.ct)
         self.ack_id = packet.ack
         if packet.cmd is not None:
@@ -69,7 +67,7 @@ class C2dOta:
     class Url:
         def __init__(self, entry: dict[str, str]):
             self.url = entry['url']
-    def __init__(self, packet: IotcC2DMessageJson):
+    def __init__(self, packet: ProtocolC2dMessageJson):
         self.message_type = C2dMessageType.parse(packet.ct)
         self.ack_id = packet.ack
         if packet.urls is not None:
@@ -87,6 +85,7 @@ class C2dOta:
             self.command_raw = ""
 
 
+# TODO: Implement other callbacks
 class Callbacks:
     connected_cb: Callable = None,
     command_cb: Optional[Callable[[C2dCommand], None]] = None
@@ -121,7 +120,6 @@ class ClientSettings:
             raise ValueError("connect_tries must be greater than 1")
         if connect_tries < 1:
             raise ValueError("connect_tries must be greater than 1")
-
 
 class Client:
     """
@@ -162,24 +160,16 @@ class Client:
         self.user_callbacks = callbacks or Callbacks()
         self.settings = settings or ClientSettings()
 
-        print(DraDiscoveryUrl(config).get_api_url())
-        t = Timing()
-        resp = urllib.request.urlopen(urllib.request.Request(DraDiscoveryUrl(config).get_api_url()))
-        response_data = IotcDiscoveryResponseJson.from_dict(json.loads(resp.read()))
-        t.lap()
-        resp = urllib.request.urlopen(DraIdentityUrl(response_data.d.bu).get_uid_api_url(config))
-        response_data = IdentityResponseData.from_dict(json.loads(resp.read()))
-        t.lap()
-        self.mqtt_config = response_data.d.mqtt_data
+        self.mqtt_config = DeviceRestApi(config).get_identity_data() # can raise DeviceConfigError
 
         self.mqtt = PahoClient(
             callback_api_version=CallbackAPIVersion.VERSION2,
-            client_id=self.mqtt_config.id
+            client_id=self.mqtt_config.client_id
         )
         # TODO: User configurable with defaults
         self.mqtt.reconnect_delay_set(min_delay=1, max_delay=int(self.settings.connect_timeout_secs / 2 + 1))
         self.mqtt.tls_set(certfile=config.device_cert_path, keyfile=config.device_pkey_path)
-        self.mqtt.username = self.mqtt_config.un
+        self.mqtt.username = self.mqtt_config.username
 
         self.mqtt.on_message = self.on_mqtt_message
         self.mqtt.on_connect = self.on_mqtt_connect
@@ -187,6 +177,7 @@ class Client:
         self.mqtt.on_publish = self.on_mqtt_publish
 
         self.user_callbacks = callbacks or Callbacks()
+
 
     def is_connected(self):
         return self.mqtt.is_connected()
@@ -212,7 +203,7 @@ class Client:
             try:
                 t = Timing()
                 mqtt_error = self.mqtt.connect(
-                    host=self.mqtt_config.h,
+                    host=self.mqtt_config.host,
                     port=8883
                 )
                 if mqtt_error != MQTTErrorCode.MQTT_ERR_SUCCESS:
@@ -229,8 +220,9 @@ class Client:
             except (SSLError, TimeoutError, OSError) as ex:
                 # OSError includes socket.gaierror when host could not be resolved
                 # This could also be temporary, so keep trying
-                print("Failed to connect to host %s. Exception: %s" % (self.mqtt_config.h, str(ex)))
+                print("Failed to connect to host %s. Exception: %s" % (self.mqtt_config.host, str(ex)))
 
+            # TODO: make this onfigurable
             backoff_ms = random.randrange(1000, 15000)
             print("Retrying connection... Backing off for %d ms." % backoff_ms)
             # Jitter back off a random number of milliseconds between 1 and 10 seconds.
@@ -270,7 +262,7 @@ class Client:
             timestamp=timestamp
         )])
 
-    def send_telemetry_records(self, records: list[TelemetryRecord]):
+    def send_telemetry_records(self, records: list[TelemetryRecord]) -> Optional[MQTTMessageInfo]:
         """
         A complex, but more powerful way to send telemetry.
         It allows the user to send multiple sets of telemetry values
@@ -286,13 +278,15 @@ class Client:
         iotc_json = Client._to_iotconnect_json(records)
         if not self.is_connected():
             print('Message NOT sent. Not connected!')
+            return None
         else:
-            self.mqtt.publish(
+            ret = self.mqtt.publish(
                 topic=self.mqtt_config.topics.rpt,
                 qos=1,
                 payload=iotc_json
             )
             print(">", iotc_json)
+            return ret
 
     @classmethod
     def _to_iotconnect_json(cls, records: list[TelemetryRecord]) -> str:
@@ -324,7 +318,7 @@ class Client:
         # msg: C2dMessage = None
         try:
             j = json.loads(payload)
-            pkt = IotcC2DMessageJson.from_dict(j)
+            pkt = ProtocolC2dMessageJson(j)
             print("<", pkt)
             msg = C2dCommand(pkt)
             if msg.message_type == C2dMessageType.COMMAND:

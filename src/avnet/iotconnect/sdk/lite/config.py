@@ -44,7 +44,7 @@ class DeviceConfig:
                 self._discovery_url = "https://awsdiscovery.iotconnect.io"
             else:
                 # best guess...
-                self._discovery_url = "https://consolediscovery.iotconnect.io"
+                self._discovery_url = "https://discoveryconsole.iotconnect.io"
 
         return self._discovery_url
 
