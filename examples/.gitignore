@@ -1,0 +1,6 @@
+# ignore the iotcDeviceConfig.json or whatever it may not be named
+*.json
+
+# ignore any certificate or private key files that may be dropped here for testing
+*.pem
+*.crt

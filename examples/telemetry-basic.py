@@ -8,14 +8,21 @@ from avnet.iotconnect.sdk.lite import __version__ as SDK_VERSION
 from avnet.iotconnect.sdk.lite.client import DeviceConfig, Callbacks, C2dCommand, TelemetryRecord
 from avnet.iotconnect.sdk.lite.config import DeviceConfigError
 
+"""
+A less elaborate way to specify your device config can be:
 device_config = DeviceConfig(
     platform="aws",
-    cpid="97FF86E8728645E9B89F7B07977E4B15",
-    env="poc",
-    duid="python-lite-sdk01_x",
-    device_cert_path="device-cert.pem",
-    device_pkey_path="device-pkey.pem"
+    cpid="mycpid",                      # From Settings -> Key Vault in the web UI
+    env="poc",                          # From Settings -> Key Vault in the web UI
+    duid="my-device",                   # Your device unique ID
+    discovery_url="https://url.io"      # (optional, can be inferred from platform) From Settings -> Key Vault in the web UI
+    device_cert_path="device-cert.pem", # Path to your device certificate - absolute or relative from you current directory when executing   
+    device_pkey_path="device-pkey.pem"  # Path to your device certificate - absolute or relative from you current directory when executing
     )
+    or load from iotCeviceConfig.json which you can download by clicking the cog icon at the top right
+    of the device info panel:
+"""
+device_config = DeviceConfig.from_iotc_device_config_json_file("iotcDeviceConfig.json", "device-cert.pem", "device-pkey.pem")
 
 @dataclass
 class ExampleAccelerometerData:
