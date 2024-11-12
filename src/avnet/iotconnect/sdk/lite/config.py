@@ -1,9 +1,11 @@
 import json
 import os.path
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from os import access, R_OK
 from typing import Optional
 
+from avnet.iotconnect.sdk.sdklib import filter_init
 from avnet.iotconnect.sdk.sdklib.protocol.files import ProtocolDeviceConfigJson
 
 
@@ -12,25 +14,38 @@ class DeviceConfigError(Exception):
         self.msg = message
         super().__init__(message)
 
-
 @dataclass
 class DeviceConfig:
     """
     =param env: Your account environment. You can locate this in you IoTConnect web UI at Settings -> Key Value
 
     """
-    env: str
-    cpid: str
-    duid: str
-    device_cert_path: str
-    device_pkey_path: str
-    platform: str
-    server_ca_cert_path: str = None # if not specified use system CA certificates in /etc/ssl or whatever it would be in windows
-    _discovery_url: str = None
+    env: str = field(default=None)
+    cpid: str = field(default=None)
+    duid: str = field(default=None)
+    device_cert_path: str = field(default=None)
+    device_pkey_path: str = field(default=None)
+    platform: Optional[str] = field(default=None)
+    server_ca_cert_path: Optional[str] = field(default=None) # if not specified use system CA certificates in /etc/ssl or whatever it would be in windows
+    discovery_url: Optional[str] = field(default=None)
 
     def __post_init__(self):
-        #todo:
-        pass
+        if self.platform not in ("aws", "az"):
+            raise DeviceConfigError('DeviceConfig: Platform must be "aws" or "az"')
+        if self.discovery_url is None:
+            if self.platform == "az":
+                self.discovery_url = "https://discovery.iotconnect.io"
+            elif self.platform == "aws":
+                if self.env == "poc":
+                    self.discovery_url = "https://awsdiscovery.iotconnect.io"
+                else:
+                    # best guess...
+                    self.discovery_url = "https://discoveryconsole.iotconnect.io"
+        DeviceConfig._validate_file(self.device_cert_path, r"^-----BEGIN CERTIFICATE-----$")
+        DeviceConfig._validate_file(self.device_pkey_path, r"^-----BEGIN.*PRIVATE KEY-----$")
+        if not os.path.isfile(self.device_pkey_path) or not access(self.device_pkey_path, R_OK):
+            raise DeviceConfigError("File %s not accessible" % self.device_pkey_path)
+
 
     @classmethod
     def from_iotc_device_config_json(
@@ -48,6 +63,7 @@ class DeviceConfig:
             cpid=device_config_json.cpid,
             duid=device_config_json.uid,
             platform=device_config_json.pf,
+            discovery_url=device_config_json.disc,
             device_cert_path=device_cert_path,
             device_pkey_path=device_pkey_path
         )
@@ -58,41 +74,24 @@ class DeviceConfig:
             device_config_json_path: str,
             device_cert_path: str,
             device_pkey_path: str) -> 'DeviceConfig':
-        if not os.path.isfile(device_config_json_path) or not access(device_config_json_path, R_OK):
-            raise DeviceConfigError("File %s not accessible" % device_config_json_path)
-
-        file_handle = open(device_config_json_path, "r")
-        file_content = file_handle.read()
-        file_handle.close()
+        file_content = cls._validate_file(device_config_json_path)
         file_dict = json.loads(file_content)
         pdcj = ProtocolDeviceConfigJson(file_dict)
         return cls.from_iotc_device_config_json(pdcj, device_cert_path=device_cert_path, device_pkey_path=device_pkey_path)
 
-    @property
-    def platform(self) -> str:
-        return self._platform
+    @classmethod
+    def _validate_file(cls, file_name: str, first_line_match_pattern: Optional[str] = None) -> str:
+        if not os.path.isfile(file_name) or not access(file_name, R_OK):
+            raise DeviceConfigError("File %s not accessible" % file_name)
+        file_handle = open(file_name, "r")
+        file_content = file_handle.read()
+        file_handle.close()
+        if file_content is None or 0 == len(file_content):
+            raise DeviceConfigError("File %s is empty" % file_name)
+        if first_line_match_pattern is not None:
+            first_line = file_content.splitlines()[0]
+            if not re.search(first_line_match_pattern, first_line):
+                raise DeviceConfigError("The file %s does not seem to be valid. Expected the file to start with regex %s" % (file_name, match_pattern))
+        file_handle.close()
+        return file_content
 
-    @platform.setter
-    def platform(self, v: str) -> None:
-        if v not in ("aws", "az"):
-            raise DeviceConfigError('DeviceConfig: Platform must be "aws" or "az"')
-        self._platform = v
-
-    @property
-    def discovery_url(self) -> str:
-        if self._discovery_url is not None:
-            return self._discovery_url  # cached value
-        elif self.platform == "az":
-            self._discovery_url = "https://discovery.iotconnect.io"
-        elif self.platform == "aws":
-            if self.env == "poc":
-                self._discovery_url = "https://awsdiscovery.iotconnect.io"
-            else:
-                # best guess...
-                self._discovery_url = "https://discoveryconsole.iotconnect.io"
-
-        return self._discovery_url
-
-    @discovery_url.setter
-    def discovery_url(self, v: str) -> None:
-        self._discovery_url = v
