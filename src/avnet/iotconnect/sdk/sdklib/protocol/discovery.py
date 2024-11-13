@@ -5,7 +5,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Optional
 
-from ..util import to_json, filter_init
+from avnet.iotconnect.sdk.sdklib.util import to_json, filter_init
 
 
 @filter_init

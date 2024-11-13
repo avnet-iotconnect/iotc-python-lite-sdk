@@ -1,3 +1,5 @@
 __version__ = '0.0.1'
 
-from .client import Client, DeviceConfig, DeviceConfigError, ClientSettings, C2dCommand, TelemetryRecord, Callbacks
+from .error import DeviceConfigError
+from .config import DeviceConfig
+from .client import Client, ClientSettings, C2dCommand, TelemetryRecord, Callbacks

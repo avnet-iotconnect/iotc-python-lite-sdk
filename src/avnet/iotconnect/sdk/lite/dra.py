@@ -1,11 +1,11 @@
 import urllib.request
-from typing import Optional
 from urllib.error import HTTPError
 
-from avnet.iotconnect.sdk.lite.config import DeviceConfig, DeviceConfigError
-from avnet.iotconnect.sdk.sdklib import Timing
-from avnet.iotconnect.sdk.sdklib.protocol import DraDiscoveryUrl, DraDeviceInfoParser, DraIdentityUrl, \
+from avnet.iotconnect.sdk.sdklib.dra import DraDiscoveryUrl, DraDeviceInfoParser, DraIdentityUrl, \
     DeviceIdentityData
+from avnet.iotconnect.sdk.sdklib.util import Timing
+from .config import DeviceConfig
+from .error import DeviceConfigError
 
 
 class DeviceRestApi:

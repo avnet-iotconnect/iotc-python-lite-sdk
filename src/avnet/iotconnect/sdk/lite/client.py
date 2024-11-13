@@ -11,16 +11,15 @@ from paho.mqtt.client import CallbackAPIVersion, MQTTErrorCode, DisconnectFlags,
 from paho.mqtt.client import Client as PahoClient
 from paho.mqtt.reasoncodes import ReasonCode
 
-from avnet.iotconnect.sdk.sdklib import Timing
+from avnet.iotconnect.sdk.sdklib.protocol.mqtt import ProtocolC2dMessageJson
+from avnet.iotconnect.sdk.sdklib.util import Timing
 from .config import DeviceConfig
-from .device_rest_api import DeviceRestApi
-from ..sdklib.protocol.mqtt import ProtocolC2dMessageJson
+from .dra import DeviceRestApi
 
 # When type "object" is defined in IoTConnect, it cannot have nested objects inside of it.
 TelemetryValueObjectType = dict[str, Union[None, str, int, float, bool, tuple[float, float]]]
 TelemetryValueType = Union[None, str, int, float, bool, tuple[float, float], TelemetryValueObjectType]
 TelemetryValues = dict[str, TelemetryValueType]
-
 
 @dataclass
 class TelemetryRecord:

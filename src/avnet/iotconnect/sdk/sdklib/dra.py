@@ -2,10 +2,9 @@ import json
 import urllib.parse
 from typing import Final, Union
 
-from .discovery import IotcDiscoveryResponseJson
-from .identity import ProtocolIdentityResponseJson, ProtocolIdentityPJson
-from .identity import ProtocolMetaJson
-from ...lite.config import DeviceConfig, DeviceConfigError
+from avnet.iotconnect.sdk.lite import DeviceConfig, DeviceConfigError
+from avnet.iotconnect.sdk.sdklib.protocol.discovery import IotcDiscoveryResponseJson
+from avnet.iotconnect.sdk.sdklib.protocol.identity import ProtocolIdentityPJson, ProtocolMetaJson, ProtocolIdentityResponseJson
 
 
 class DeviceIdentityData:

@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Optional
 
-from avnet.iotconnect.sdk.sdklib import filter_init
+from avnet.iotconnect.sdk.sdklib.util import filter_init
 
 
 @filter_init

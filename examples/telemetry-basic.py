@@ -6,17 +6,19 @@ from dataclasses import dataclass, asdict
 from avnet.iotconnect.sdk.lite import Client, DeviceConfig, C2dCommand, TelemetryRecord, Callbacks, DeviceConfigError
 from avnet.iotconnect.sdk.lite import __version__ as SDK_VERSION
 
-# See telemetry-minimal.py example for a way to configure the device without the JSON file
-# You can download the iotcDeviceConfig.json by clicking the cog icon in the upper right of your device's info panel
+"""
+See telemetry-minimal.py example for a way to configure the device without the JSON file
+You can download the iotcDeviceConfig.json by clicking the cog icon in the upper right of your device's info panel
+NOTE: If you do not pass the server certificate, we will use the system's trusted certificate store, if available.
+For example, the trusted Root CA certificates from the in /etc/ssl/certs will be used on Linux.
+However, it is more secure to pass the actual server CA Root certificate in order to avoid potential MITM attacks.
+On Linux, you can use server_ca_cert_path="/etc/ssl/certs/DigiCert_Global_Root_CA.pem" for Azure
+or server_ca_cert_path="/etc/ssl/certs/Amazon_Root_CA_1.pem" for AWS
+"""
 device_config = DeviceConfig.from_iotc_device_config_json_file(
-    "iotcDeviceConfig.json",
-    "device-cert.pem",
-    "device-pkey.pem"
-    # NOTE: If you do not pass the server certificate, we will use the system's trusted certificate store, if available.
-    # For example, the trusted Root CA certificates from the in /etc/ssl/certs will be used on Linux.
-    # However, it is more secure to pass the actual server CA Root certificate in order to avoid potential MITM attacks.
-    # On Linux, you can use server_ca_cert_path="/etc/ssl/certs/DigiCert_Global_Root_CA.pem" for Azure
-    # or server_ca_cert_path="/etc/ssl/certs/Amazon_Root_CA_1.pem" for AWS
+    device_config_json_path="iotcDeviceConfig.json",
+    device_cert_path="device-cert.pem",
+    device_pkey_path="device-pkey.pem"
 )
 
 
@@ -25,13 +27,6 @@ class ExampleAccelerometerData:
     x: float
     y: float
     z: float
-
-
-acc = {
-    'x': 1,
-    'y': 3
-}
-
 
 @dataclass
 class ExampleSensorData:
@@ -73,11 +68,9 @@ def send_telemetry():
         'sdk_version': SDK_VERSION,
         'random': random.randint(0, 100),
         'accel': {
-            'x': 'Value A',
-            'y': 'Value 3',
-            'obj': {
-                'o': 2
-            }
+            'x': 33.44,
+            'y': 55.6,
+            'z': 0.5
         },
         'latlng': [34, -43.22233]
     })

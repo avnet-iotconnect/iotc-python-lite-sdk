@@ -5,13 +5,8 @@ from dataclasses import dataclass, field
 from os import access, R_OK
 from typing import Optional
 
+from .error import DeviceConfigError
 from avnet.iotconnect.sdk.sdklib.protocol.files import ProtocolDeviceConfigJson
-
-
-class DeviceConfigError(Exception):
-    def __init__(self, message: str):
-        self.msg = message
-        super().__init__(message)
 
 
 @dataclass
@@ -40,7 +35,7 @@ class DeviceConfig:
     """The IoTconnect IoT platform - Either "aws" for AWS IoTCore or "az" for Azure IoTHub"""
 
     env: str = field(default=None)
-    """:param str env: Your account environment. You can locate this in you IoTConnect web UI at Settings -> Key Value"""
+    """Your account environment. You can locate this in you IoTConnect web UI at Settings -> Key Value"""
 
     cpid: str = field(default=None)
     """Your account CPID (Company ID). You can locate this in you IoTConnect web UI at Settings -> Key Value"""
@@ -135,6 +130,6 @@ class DeviceConfig:
         if first_line_match_pattern is not None:
             first_line = file_content.splitlines()[0]
             if not re.search(first_line_match_pattern, first_line):
-                raise DeviceConfigError("The file %s does not seem to be valid. Expected the file to start with regex %s" % (file_name, match_pattern))
+                raise DeviceConfigError("The file %s does not seem to be valid. Expected the file to start with regex %s" % (file_name, first_line_match_pattern))
         file_handle.close()
         return file_content
