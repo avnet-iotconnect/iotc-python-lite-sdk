@@ -34,7 +34,6 @@ class ExampleSensorData:
     humidity: float
     accel: ExampleAccelerometerData
 
-
 def on_command(msg: C2dCommand):
     print("Received command", msg.command_name, msg.command_args)
     if msg.command_name == "set-user-led":
@@ -43,6 +42,8 @@ def on_command(msg: C2dCommand):
         else:
             print("Expected three command arguments, but got", len(msg.command_args))
 
+def on_disconnect(reason: str, disconnected_from_server: bool):
+    print("Disconnected%s. Reason: %s" % (" from server" if disconnected_from_server else "", reason))
 
 def send_telemetry():
     # send structured data make sure your object has the @dataclass decorator
@@ -93,13 +94,17 @@ if __name__ == '__main__':
         c = Client(
             config=device_config,
             callbacks=Callbacks(
-                command_cb=on_command
+                command_cb=on_command,
+                disconnected_cb=on_disconnect
             )
         )
         while True:
             if not c.is_connected():
                 print('(re)connecting...')
                 c.connect()
+                if not c.is_connected():
+                    print('Unable to connect. Exiting.') # Still unable to connect after 100 (default) re-tries.
+                    sys.exit(2)
 
             send_telemetry()
             time.sleep(10)
@@ -109,5 +114,5 @@ if __name__ == '__main__':
         sys.exit(1)
 
     except KeyboardInterrupt:
-        print()
-        sys.exit(2)
+        print("Exiting.")
+        sys.exit(0)

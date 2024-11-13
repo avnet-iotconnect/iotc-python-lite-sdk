@@ -1,5 +1,5 @@
 import urllib.request
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 from avnet.iotconnect.sdk.sdklib.dra import DraDiscoveryUrl, DraDeviceInfoParser, DraIdentityUrl, \
     DeviceIdentityData
@@ -29,5 +29,7 @@ class DeviceRestApi:
             return identity_response
 
         except HTTPError as http_error:
-            print(http_error)
             raise DeviceConfigError(http_error)
+
+        except URLError as url_error:
+            raise DeviceConfigError(str(url_error))

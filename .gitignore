@@ -5,10 +5,12 @@
 # Python Virtual Environment while devloping etc.
 /.venv/
 
-# Generated files and test files
+# Build generated files
 /build
-*.whl
+/dist
+/*.gz
+/*.whl
 
-# This will be generated when mking an editable install
+# This will be generated when making an editable installs
 src/iotconnect_sdk_lite.egg-info/
 

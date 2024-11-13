@@ -84,32 +84,41 @@ class C2dOta:
 
 # TODO: Implement other callbacks
 class Callbacks:
-    connected_cb: Callable = None,
-    command_cb: Optional[Callable[[C2dCommand], None]] = None
-    ota_cb: Callable = None
+    """
+    Specify callbacks for C2D command, OTA (not implemented yet) or MQTT disconnection.
 
+    :param command_cb: Callback function with first parameter being C2dCommand object.
+        Use this callback to process commands sent by the back end.
+
+    :param ota_cb: (Not yet implemented) Callback function with first parameter being C2dOta object.
+        Use this callback to process OTA updates sent by the back end.
+
+    :param disconnected_cb: Callback function with first parameter being string with reason for disconnect
+        and second a boolean indicating whether a disconnect request was received from the server.
+        Use this callback to asynchronously react to the back end disconnection event rather than polling Client.is_connected.
+    """
     def __init__(
             self,
-            connected_cb=None,
             command_cb: Optional[Callable[[C2dCommand], None]] = None,
-            ota_cb=None
+            ota_cb=None,
+            disconnected_cb: Optional[Callable[[str, bool], None]] = None
     ):
-        self.connected_cb = connected_cb
+        self.disconnected_cb = disconnected_cb
         self.command_cb = command_cb
         self.ota_cb = ota_cb
 
 
 class ClientSettings:
-    """ Optional settings that the user can use to control the MQTT connection behavior
-
-    """
+    """ Optional settings that the user can use to control the client MQTT connection behavior"""
 
     def __init__(
             self,
+            verbose = True,
             connect_timeout_secs: int = 30,
             connect_tries: int = 100,
             connect_backoff_secs: int = 10
     ):
+        self.verbose = verbose
         self.connect_timeout_secs = connect_timeout_secs
         self.connect_tries = connect_tries
         self.connect_backoff_secs = connect_backoff_secs
@@ -120,11 +129,65 @@ class ClientSettings:
 
 class Client:
     """
+    This is an Avnet IoTConnect MQTT client that provides an easy way for the user to
+    connect to IoTConnect, send and receive data.
+
+    :param config: Required device configuration. See the examples or DeviceConfig class description for more details.
+    :param callbacks: Optional callbacks that can be provided for the following events:
+        - IoTConnect C2D (Cloud To Device) commands that you can send to your device using the IoTConnect
+        - IoTConnect OTA update events.
+        - Device MQTT disconnection.
+    :param settings: Tune the client behavior by providing your preferences regarding connection timeouts and logging.
+
+    Usage (see telemetry-basic.py or telemetry-minimal.py examples at https://github.com/avnet-iotconnect/iotc-python-lite-sdk for more details):
+
+    - Construct this client class:
+        - Provide your device information and x509 credentials (certificate and private key)
+            Either provide the path the downloaded iotcDeviceConfig.json and use the DeviceConfig.from_iotc_device_config_json_file()
+            class method. You can download the iotcDeviceConfig.json by clicking the cog icon in the upper right of your device's info panel.
+
+            Or you can also provide the device parameters directly:
+
+            device_config = DeviceConfig(
+                platform="aws",                             # The IoTconnect IoT platform - Either "aws" for AWS IoTCore or "az" for Azure IoTHub
+                env="your-environment",                     # Your account environment. You can locate this in you IoTConnect web UI at Settings -> Key Value
+                cpid="ABCDEFG123456",                       # Your account CPID (Company ID). You can locate this in you IoTConnect web UI at Settings -> Key Value
+                duid="my-device",                           # Your device unique ID
+                device_cert_path="path/to/device-cert.pem", # Path to the device certificate file
+                device_pkey_path="path/to/device-pkey.pem"  # Path to the device private key file
+            )
+            NOTE: If you do not pass the server certificate, we will use the system's trusted certificate store, if available.
+            For example, the trusted Root CA certificates from the in /etc/ssl/certs will be used on Linux.
+            However, it is more secure to pass the actual server CA Root certificate in order to avoid potential MITM attacks.
+            On Linux, you can use server_ca_cert_path="/etc/ssl/certs/DigiCert_Global_Root_CA.pem" for Azure
+            or server_ca_cert_path="/etc/ssl/certs/Amazon_Root_CA_1.pem" for AWS
+
+        - (Optional) provide callbacks for C2D Commands or device disconnect.
+            See the telemetry-basic.py at https://github.com/avnet-iotconnect/iotc-python-lite-sdk example for details.
+
+        - (Optional) provide ClientSettings to tune the client behavior.
+
+        It is recommended to surround the DeviceConfig constructor and the Client constructor
+        with a try/except block catching DeviceConfigError and printing it to get more information
+        to be able to troubleshoot configuration errors.
+
+
+    - Call Client.connect(). The call will block until successfully connected or timed out. For example:
+
+    - Ensure that the Client.is_connected() periodically or react to a disconnect event callback
+        and attempt to reconnect or perform a different action appropriate to your application. For example:
+        if not client.is_connected:
+            client.connect()
+
+    - Send messages with Client.send_telemetry() or send_telemetry_records().
+        See telemetry-basic.py example at https://github.com/avnet-iotconnect/iotc-python-lite-sdk for more info.
+        For example:
+            c.send_telemetry({
+                'temperature': get_sensor_temperature()
+            })
+
     """
-    @classmethod
-    def timestamp_now(cls) -> datetime:
-        """ Returns the UTC timestamp that can be used to stamp telemetry records """
-        return datetime.now(timezone.utc)
+
 
     def __init__(
             self,
@@ -154,6 +217,10 @@ class Client:
 
         self.user_callbacks = callbacks or Callbacks()
 
+    @classmethod
+    def timestamp_now(cls) -> datetime:
+        """ Returns the UTC timestamp that can be used to stamp telemetry records """
+        return datetime.now(timezone.utc)
 
     def is_connected(self):
         return self.mqtt.is_connected()
@@ -161,10 +228,12 @@ class Client:
     def connect(self):
         def wait_for_connection() -> bool:
             connect_timer = Timing()
-            print("waiting to connect...")
+            if self.settings.verbose:
+                print("waiting to connect...")
             while True:
                 if self.is_connected():
-                    print("MQTT connected")
+                    if self.settings.verbose:
+                        print("MQTT connected")
                     return True
                 time.sleep(0.5)
                 if connect_timer.diff_now().seconds > self.settings.connect_timeout_secs:
@@ -188,7 +257,8 @@ class Client:
                     print("Awaiting MQTT connection establishment...")
                     self.mqtt.loop_start()
                     if wait_for_connection():
-                        print("Connected in %dms" % (t.diff_now().microseconds / 1000))
+                        if self.settings.verbose:
+                            print("Connected in %dms" % (t.diff_now().microseconds / 1000))
                         break
                     else:
                         continue
@@ -208,7 +278,8 @@ class Client:
 
     def disconnect(self) -> MQTTErrorCode:
         ret = self.mqtt.disconnect()
-        print("Disconnected.")
+        if self.settings.verbose:
+            print("Disconnected.")
         return ret
 
     def send_telemetry(self, values: dict[str, TelemetryValueType], timestamp: datetime = None):
@@ -315,14 +386,19 @@ class Client:
             return False
 
     def on_mqtt_connect(self, mqttc: PahoClient, obj, flags, reason_code, properties):
-        print("Connected. Reason Code: " + str(reason_code))
+        if self.settings.verbose:
+            print("Connected. Reason Code: " + str(reason_code))
 
     def on_mqtt_disconnect(self, mqttc: PahoClient, obj, flags: DisconnectFlags, reason_code: ReasonCode, properties):
-        # print("Disconnected. Reason: %s. Flags: %s" % (str(reason_code), str(flags)))
-        print("Disconnected")
+        if self.user_callbacks.disconnected_cb is not None:
+            # cannot send raw reason code from paho. We could technically change the backend.
+            self.user_callbacks.disconnected_cb(str(reason_code), flags.is_disconnect_packet_from_server)
+        else:
+            print("Disconnected. Reason: %s. Flags: %s" % (str(reason_code), str(flags)))
 
     def on_mqtt_message(self, mqttc: PahoClient, obj, msg):
-        print(msg.topic + " " + str(msg.qos) + " " + str(msg.payload))
+        if self.settings.verbose:
+            print(msg.topic + " " + str(msg.qos) + " " + str(msg.payload))
         self._process_c2d_message(msg.topic, msg.payload)
 
     def on_mqtt_publish(self, mqttc: PahoClient, obj, mid, reason_code, properties):

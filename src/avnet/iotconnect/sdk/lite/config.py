@@ -14,11 +14,9 @@ class DeviceConfig:
     """
     This dictionary (dataclass) defines your device's configuration settings.
     You can construct an instance on the fly or use the from_iotc_device_config_json_file class method
-    to load most of the the device configuration's required parameters from the iotcDeviceConfig.json,
-    which you can download by clicking the "note and cog" icon in your device's info panel
-
-
-
+    to load most of the device configuration's required parameters from the iotcDeviceConfig.json,
+    which you can download by clicking the "note and cog" icon in your device's info panel.
+    
     Example:
 
         device_config = DeviceConfig(
