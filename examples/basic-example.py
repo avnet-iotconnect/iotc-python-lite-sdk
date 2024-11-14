@@ -7,7 +7,7 @@ from avnet.iotconnect.sdk.lite import Client, DeviceConfig, C2dCommand, Telemetr
 from avnet.iotconnect.sdk.lite import __version__ as SDK_VERSION
 
 """
-See telemetry-minimal.py example for a way to configure the device without the JSON file
+See minimal.py example for a way to configure the device without the JSON file
 You can download the iotcDeviceConfig.json by clicking the cog icon in the upper right of your device's info panel
 NOTE: If you do not pass the server certificate, we will use the system's trusted certificate store, if available.
 For example, the trusted Root CA certificates from the in /etc/ssl/certs will be used on Linux.
@@ -15,11 +15,6 @@ However, it is more secure to pass the actual server CA Root certificate in orde
 On Linux, you can use server_ca_cert_path="/etc/ssl/certs/DigiCert_Global_Root_CA.pem" for Azure
 or server_ca_cert_path="/etc/ssl/certs/Amazon_Root_CA_1.pem" for AWS
 """
-device_config = DeviceConfig.from_iotc_device_config_json_file(
-    device_config_json_path="iotcDeviceConfig.json",
-    device_cert_path="device-cert.pem",
-    device_pkey_path="device-pkey.pem"
-)
 
 
 @dataclass
@@ -28,11 +23,13 @@ class ExampleAccelerometerData:
     y: float
     z: float
 
+
 @dataclass
 class ExampleSensorData:
     temperature: float
     humidity: float
     accel: ExampleAccelerometerData
+
 
 def on_command(msg: C2dCommand):
     print("Received command", msg.command_name, msg.command_args)
@@ -42,8 +39,10 @@ def on_command(msg: C2dCommand):
         else:
             print("Expected three command arguments, but got", len(msg.command_args))
 
+
 def on_disconnect(reason: str, disconnected_from_server: bool):
     print("Disconnected%s. Reason: %s" % (" from server" if disconnected_from_server else "", reason))
+
 
 def send_telemetry():
     # send structured data make sure your object has the @dataclass decorator
@@ -89,30 +88,35 @@ def send_telemetry():
     # multiple records will be sent with different timestamps
 
 
-if __name__ == '__main__':
-    try:
-        c = Client(
-            config=device_config,
-            callbacks=Callbacks(
-                command_cb=on_command,
-                disconnected_cb=on_disconnect
-            )
+try:
+    device_config = DeviceConfig.from_iotc_device_config_json_file(
+        device_config_json_path="iotcDeviceConfig.json",
+        device_cert_path="device-cert.pem",
+        device_pkey_path="device-pkey.pem"
+    )
+
+    c = Client(
+        config=device_config,
+        callbacks=Callbacks(
+            command_cb=on_command,
+            disconnected_cb=on_disconnect
         )
-        while True:
+    )
+    while True:
+        if not c.is_connected():
+            print('(re)connecting...')
+            c.connect()
             if not c.is_connected():
-                print('(re)connecting...')
-                c.connect()
-                if not c.is_connected():
-                    print('Unable to connect. Exiting.') # Still unable to connect after 100 (default) re-tries.
-                    sys.exit(2)
+                print('Unable to connect. Exiting.')  # Still unable to connect after 100 (default) re-tries.
+                sys.exit(2)
 
-            send_telemetry()
-            time.sleep(10)
+        send_telemetry()
+        time.sleep(10)
 
-    except DeviceConfigError as dce:
-        print(dce)
-        sys.exit(1)
+except DeviceConfigError as dce:
+    print(dce)
+    sys.exit(1)
 
-    except KeyboardInterrupt:
-        print("Exiting.")
-        sys.exit(0)
+except KeyboardInterrupt:
+    print("Exiting.")
+    sys.exit(0)

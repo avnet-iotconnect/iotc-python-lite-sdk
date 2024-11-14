@@ -1,4 +1,4 @@
-# ignore the iotcDeviceConfig.json or whatever it may not be named
+# ignore the iotcDeviceConfig.json or whatever it may not be named during testing
 *.json
 
 # ignore any certificate or private key files that may be dropped here for testing

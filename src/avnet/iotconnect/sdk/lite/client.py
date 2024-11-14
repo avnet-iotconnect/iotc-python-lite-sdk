@@ -139,7 +139,7 @@ class Client:
         - Device MQTT disconnection.
     :param settings: Tune the client behavior by providing your preferences regarding connection timeouts and logging.
 
-    Usage (see telemetry-basic.py or telemetry-minimal.py examples at https://github.com/avnet-iotconnect/iotc-python-lite-sdk for more details):
+    Usage (see basic-example.py or minimal.py examples at https://github.com/avnet-iotconnect/iotc-python-lite-sdk for more details):
 
     - Construct this client class:
         - Provide your device information and x509 credentials (certificate and private key)
@@ -163,7 +163,7 @@ class Client:
             or server_ca_cert_path="/etc/ssl/certs/Amazon_Root_CA_1.pem" for AWS
 
         - (Optional) provide callbacks for C2D Commands or device disconnect.
-            See the telemetry-basic.py at https://github.com/avnet-iotconnect/iotc-python-lite-sdk example for details.
+            See the basic-example.py at https://github.com/avnet-iotconnect/iotc-python-lite-sdk example for details.
 
         - (Optional) provide ClientSettings to tune the client behavior.
 
@@ -180,7 +180,7 @@ class Client:
             client.connect()
 
     - Send messages with Client.send_telemetry() or send_telemetry_records().
-        See telemetry-basic.py example at https://github.com/avnet-iotconnect/iotc-python-lite-sdk for more info.
+        See basic-example.py example at https://github.com/avnet-iotconnect/iotc-python-lite-sdk for more info.
         For example:
             c.send_telemetry({
                 'temperature': get_sensor_temperature()

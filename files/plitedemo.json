@@ -1,8 +1,15 @@
 {
     "code": "plitedemo",
-    "name": "Python Lite SDK Quickstart",
+    "name": "plitedemo",
     "authType": 2,
     "attributes": [
+        {
+            "name": "sdk_version",
+            "type": "STRING",
+            "description": "Version of the SDK for troubleshooting purposes",
+            "unit": "",
+            "aggregateTypes": []
+        },
         {
             "name": "random",
             "type": "DECIMAL",
