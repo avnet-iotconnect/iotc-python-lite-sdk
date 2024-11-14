@@ -113,7 +113,7 @@ if [[ -f "iotcDeviceConfig.json" ]]; then
 fi
 
 cat <<END
-Open the downloaded file in a text editor and paste the content into this terminal and hit ENTER to add the last line.
+Open the downloaded file in a text editor and paste the content into this terminal and hit ENTER to add the last line:
 END
 
 echo > iotcDeviceConfig.json
@@ -126,18 +126,22 @@ while true; do
 done
 
 do_download=true
-if [[ -f ./quickstart.py ]]; then
+if [[ -n "${NO_QUICKSTART_PY_DOWNLOAD}" ]]; then
+  do_download=false
+fi
+
+if [[ $do_download && -f quickstart.py ]]; then
   if ! askyn "It seems that the quickstart.py already exists. Do you want to overwrite it?"; then
     do_download=false
   fi
 fi
 
-if $do_download; then
+if [[ $do_download ]]; then
   echo "Downloading quickstart.py... (TBD)"
   if [[ -z "${QUICKSTART_PY}" ]]; then
-    QUICKSTART_PY="TBT"
+    QUICKSTART_PY="https://raw.githubusercontent.com/avnet-iotconnect/iotc-python-lite-sdk/refs/heads/main/examples/quickstart.py"
   fi
-  cp ../examples/quickstart.py .
+  curl -sOJ "${QUICKSTART_PY}"
 fi
 
 cat <<END
