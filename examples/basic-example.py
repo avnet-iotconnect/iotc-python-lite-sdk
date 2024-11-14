@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2024 Avnet
+# Authors: Nikola Markovic <nikola.markovic@avnet.com> et al.
+
 import random
 import sys
 import time

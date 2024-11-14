@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2024 Avnet
+# Authors: Nikola Markovic <nikola.markovic@avnet.com> et al.
+
 import json
 from dataclasses import fields, is_dataclass, field, dataclass
 from datetime import datetime, timedelta
