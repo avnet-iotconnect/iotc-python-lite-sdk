@@ -1,0 +1,16 @@
+# Development IDEs
+/.idea/
+/.vscode/
+
+# Python Virtual Environment while devloping etc.
+/.venv/
+
+# Build generated files
+/build
+/dist
+/*.gz
+/*.whl
+
+# This will be generated when making an editable installs
+src/iotconnect_sdk_lite.egg-info/
+

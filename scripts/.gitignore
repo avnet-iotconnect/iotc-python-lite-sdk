@@ -1,0 +1,4 @@
+# artifacts from doing test runs on quickstart.sh
+/*.pem
+/iotcDeviceConfig.json
+/quickstart.py

@@ -1,0 +1,42 @@
+{
+    "code": "plitedemo",
+    "name": "plitedemo",
+    "authType": 2,
+    "attributes": [
+        {
+            "name": "sdk_version",
+            "type": "STRING",
+            "description": "Version of the SDK for troubleshooting purposes",
+            "unit": "",
+            "aggregateTypes": []
+        },
+        {
+            "name": "random",
+            "type": "DECIMAL",
+            "description": "A generated random number",
+            "unit": "",
+            "aggregateTypes": []
+        }
+    ],
+    "commands": [
+        {
+            "name": "set-user-led",
+            "command": "set-user-led",
+            "requiredParam": true,
+            "requiredAck": true,
+            "isOTACommand": false
+        }
+    ],
+    "messageVersion": "2.1",
+    "msgCode": "XG4E1QO",
+    "greenGrass": "0",
+    "wireless": "0",
+    "properties": {
+        "description": null,
+        "dataFrequency": "60",
+        "fileSupport": false
+    },
+    "_meta": {
+        "version": "2.0"
+    }
+}
