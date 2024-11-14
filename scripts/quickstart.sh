@@ -123,12 +123,20 @@ while true; do
   fi
 done
 
-echo "Downloading quickstart.py... (TBD)"
-cp ../examples/quickstart.py .
+do_download=true
+if [[ -f ./quickstart.py ]]; then
+  if ! askyn "It seems that the quickstart.py already exists. Do you want to overwrite it?"; then
+    do_download=false
+  fi
+fi
+
+if $do_download; then
+  echo "Downloading quickstart.py... (TBD)"
+  cp ../examples/quickstart.py .
+fi
 
 cat <<END
-If you are connecting via a serial terminal, ensure that the content of iotcDeviceConfig.json matches what you pasted (type "cat iotcDeviceConfig.json" at the prompt to view it).
-In some cases, pasting text into a serial terminal can cause it to skip characters. If using TeraTerm on Windows, enter a 10ms "Transmit delay" for both lines and characters in the Settings -> Serial Port dialog.
+If you are connecting via a serial terminal, ensure that the content of iotcDeviceConfig.json matches what you pasted (type "cat iotcDeviceConfig.json" at the prompt to view it). In some cases, pasting text into a serial terminal can cause it to skip characters. If using TeraTerm on Windows, enter a 10ms "Transmit delay" for both lines and characters in the Settings -> Serial Port dialog.
 The Quickstart setup is complete.
 You can now run this command on the command line to execute the Quickstart demo:
 python3 quickstart.py

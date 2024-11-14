@@ -39,9 +39,33 @@ An IoTConnect *Device Template* will need to be created or imported. This define
 
 ## Device Setup
 
+Download and install the Python Lite SDK:
+```shell
+curl -sOJ 'https://saleshosted.z13.web.core.windows.net/sdk/python/iotconnect_sdk_lite-1.0.0-py3-none-any.whl'
+python3 -m pip install iotconnect_sdk_lite-1.0.0-py3-none-any.whl
+```
 Execute the quickstart setup with the following line:
 ```shell
-curl https://sdk.cloud.google.com | bash
+curl -s --output quickstart.sh 'https://raw.githubusercontent.com/avnet-iotconnect/iotc-python-lite-sdk/refs/heads/initial/scripts/quickstart.sh' && bash ./quickstart.sh
+``` 
+Follow the quickstart.sh script prompts.
+
+Successful output form running the quickstart should look like similar to this:
+```
+(re)connecting...
+Awaiting MQTT connection establishment...
+waiting to connect...
+Connected. Reason Code: Success
+MQTT connected
+Connected in 572ms
+> {"d":[{"d":{"sdk_version":"0.1.0","random":83}}]}
+> {"d":[{"d":{"sdk_version":"0.1.0","random":13}}]}
+...
 ```
 
-TBD Follow the quickstart.sh script
+If sending a command set-user-led with arguments "", you should see output similar to this:
+```
+Received command set-user-led ['50', '255', '0']
+Setting User LED to R:50 G:255 B:0
+...
+```
