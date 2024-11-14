@@ -23,11 +23,3 @@ class IotcDiscoveryResponseJson:
     d: ProtocolDiscoveryDJson = field(default_factory=ProtocolDiscoveryDJson)
     status: Optional[int] = field(default=None)
     message: Optional[str] = field(default=None)
-
-
-if __name__ == '__main__':
-    # unit test
-    json_data = '{"d":{"ec":0,"bu":"https://diavnet.iotconnect.io/api/2.1/agent/device-identity/cg/b892c358-e375-4cc3-8841-32e271e26151","log:mqtt":{"hn":"","un":"","pwd":"","topic":""},"pf":"az"},"status":200,"message":"Success"}'
-    d = json.loads(json_data)
-    response = IotcDiscoveryResponseJson(d)
-    print("Json = ", to_json(response))

@@ -23,7 +23,7 @@ TelemetryValues = dict[str, TelemetryValueType]
 
 @dataclass
 class TelemetryRecord:
-    values: dict[str, TelemetryValueType]
+    values: TelemetryValues
     timestamp: datetime = None
     unique_id: str = None
     tag: str = None
@@ -82,7 +82,6 @@ class C2dOta:
             self.command_raw = ""
 
 
-# TODO: Implement other callbacks
 class Callbacks:
     """
     Specify callbacks for C2D command, OTA (not implemented yet) or MQTT disconnection.
@@ -90,7 +89,7 @@ class Callbacks:
     :param command_cb: Callback function with first parameter being C2dCommand object.
         Use this callback to process commands sent by the back end.
 
-    :param ota_cb: (Not yet implemented) Callback function with first parameter being C2dOta object.
+    :param ota_cb: (TODO: Not yet implemented) Callback function with first parameter being C2dOta object.
         Use this callback to process OTA updates sent by the back end.
 
     :param disconnected_cb: Callback function with first parameter being string with reason for disconnect
@@ -122,8 +121,8 @@ class ClientSettings:
         self.connect_timeout_secs = connect_timeout_secs
         self.connect_tries = connect_tries
         self.connect_backoff_secs = connect_backoff_secs
-        if connect_tries < 1:
-            raise ValueError("connect_tries must be greater than 1")
+        if connect_timeout_secs < 1:
+            raise ValueError("connect_timeout_secs must be greater than 1")
         if connect_tries < 1:
             raise ValueError("connect_tries must be greater than 1")
 

@@ -119,7 +119,7 @@ class DeviceConfig:
     def _validate_file(cls, file_name: str, first_line_match_pattern: Optional[str] = None) -> str:
         """ Helper to validate a file - it needs to exist, needs to be readable and (if supplied) the first line has to match the pattern """
         if not os.path.isfile(file_name) or not access(file_name, R_OK):
-            raise DeviceConfigError("File %s not accessible" % file_name)
+            raise DeviceConfigError("File %s is not accessible" % file_name)
         file_handle = open(file_name, "r")
         file_content = file_handle.read()
         file_handle.close()

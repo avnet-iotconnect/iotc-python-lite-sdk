@@ -1,6 +1,6 @@
 # Introduction
-This project is a Python Lightweight Client (SDK)
-that aims a modern, intuitive and robust interface to connect your 
+This project is the Python Light Client (SDK)
+that aims for a modern, intuitive and robust interface to connect your
 Linux, Windows or MacOS devices to the Avnet IoTConnect platform.
 
 The project supports IoTConnect Device Protocol 2.1 devices. 
@@ -12,6 +12,11 @@ Offline or HTTP Client along with other features like Gateway/Child support
 you should check out the standard
 [Iotconnect Python SDK](https://github.com/avnet-iotconnect/iotc-python-sdk) repository.
 
+# Licensing
+
+This python package is distributed under the [MIT License](LICENSE.md).
+
 # Installing
 
 The quickest way to get started with the project is to follow the [QUICKSTART.md](QUICKSTART.md) document.
+

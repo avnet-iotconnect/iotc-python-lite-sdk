@@ -76,7 +76,6 @@ has curl || exit 5
 check_python_version || exit 5
 check_sdk || exit 6
 
-
 if [[ -f "device-cert.pem" && -f "device-pkey.pem" ]]; then
   if askyn "It seems that the device certificate and key already exist. Do you want to overwrite them?"; then
     gencert "device"
@@ -90,12 +89,12 @@ cat <<END
 ---- IoTconnect Python Lite SDK Quickstart ----
 This script will help guide you through the setup this device with IoTConnect.
 Ensure that you have read the guide at https://github.com/avnet-iotconnect/iotc-python-lite-sdk on how to install the lite SDK before proceeding.
-If you area already familiar with IoTconnect you can follow these simple steps:
+If you are already familiar with IoTconnect you can follow these simple steps:
 - Create the device template by uploading TBD link to template.
 - Create a new device and:
   - Select your Entity and the newly created template.
   - Click the "Use my certificate" radio button.
-- Copy and paste the certificate that will be printed, including the BEGIN and END lines into the Certificate Text field.
+  - Copy and paste the certificate that will be printed, including the BEGIN and END lines into the Certificate Text field:
 END
 
 read -rp "ENTER to print the certificate and proceed:"
@@ -132,6 +131,9 @@ fi
 
 if $do_download; then
   echo "Downloading quickstart.py... (TBD)"
+  if [[ -z "${QUICKSTART_PY}" ]]; then
+    QUICKSTART_PY="TBT"
+  fi
   cp ../examples/quickstart.py .
 fi
 

@@ -90,29 +90,3 @@ class Timing:
         if do_print:
             print("timing: ", ret)
         return ret
-
-    def __setitem__(self, key, value):
-        def check_primitive_or_latlong(value) -> bool:
-            if isinstance(value, (None, str, int, float, bool)):
-                return True
-            elif isinstance(value, list):
-                if len(value) != 2:
-                    raise ValueError("Not lat/long", key, "=", value)
-                else:
-                    return True
-            return False  # not primitive or latlong
-
-        if not isinstance(key, str):
-            raise ValueError("Bad key type")
-
-        if check_primitive_or_latlong(value):
-            pass
-        elif isinstance(value, dict):
-            for k in value:
-                if not isinstance(k, str):
-                    raise ValueError("Bad key type")
-                if not check_primitive_or_latlong(value.get(k)):
-                    raise ValueError("Inner dictionary object must not be nested")
-
-        else:
-            raise ValueError("Bad type for key", key, type(value))

@@ -14,4 +14,4 @@ class ProtocolDeviceConfigJson:
     disc: Optional[str] = field(default=None)
     ver: Optional[str] = field(default="2.1")
     pf: Optional[str] = field(default="aws")
-    at: Optional[int] = field(default=7)          # not sure what this means
+    at: Optional[int] = field(default=7)          # authentication type, but ignored for now

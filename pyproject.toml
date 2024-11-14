@@ -7,7 +7,7 @@ name = "iotconnect-sdk-lite"
 dynamic = ["version"]
 description = "Avnet IoTConnect Lite SDK"
 readme = "README.md"
-requires-python = ">=3.5"
+requires-python = ">=3.7"
 authors = [
     { name = "Nik Markovic", email = "nikola.markovic@avnet.com" },
 ]
@@ -33,6 +33,7 @@ classifiers = [
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Communications",
     "Topic :: Internet",
