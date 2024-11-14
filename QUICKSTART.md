@@ -6,11 +6,11 @@ on your PC.
 The guide uses to a bash shell command prompt. The best way to get bash on
 Windows is to install Git for Windows.
 
-Additionally, you will need openssl.
+Additionally, you will need openssl and curl.
 
 If you have previously installed the standard [Iotconnect Python SDK](https://github.com/avnet-iotconnect/iotc-python-sdk)
-please note that you will not be able to use it alongside the Lite SDK unless
-you install this SDK in a Python virtual environment, as it will upgrade the 
+please note that you will not be able to use it alongside the Lite SDK,
+unless you install this SDK in a Python virtual environment, as it will upgrade the 
 paho-mqtt dependency package.
 
 ## Cloud Account Setup
