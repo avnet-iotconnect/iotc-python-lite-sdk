@@ -145,7 +145,7 @@ if [[ ${do_download} && -f quickstart.py ]]; then
 fi
 
 if ${do_download}; then
-  if ! has cccurl; then
+  if ! has curl; then
     if has wget; then
       echo "Using wget to download..."
       use_curl=false
