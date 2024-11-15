@@ -63,6 +63,9 @@ Or with wget:
 ```shell
 wget -qN 'https://raw.githubusercontent.com/avnet-iotconnect/iotc-python-lite-sdk/refs/heads/main/scripts/quickstart.sh' && bash ./quickstart.sh
 ```
+> **Note:** If on Windows, after the script completes, 
+> you may need to run python in unbuffered mode instead with "python3 -u quickstart.py"
+
 
 Follow the quickstart.sh script prompts.
 
