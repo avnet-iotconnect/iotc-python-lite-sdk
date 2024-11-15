@@ -57,8 +57,13 @@ python3 -m pip install iotconnect_sdk_lite-0.1.0-py3-none-any.whl
 
 Execute the quickstart setup with the following line:
 ```shell
-curl -s --output quickstart.sh 'https://raw.githubusercontent.com/avnet-iotconnect/iotc-python-lite-sdk/refs/heads/main/scripts/quickstart.sh' && bash ./quickstart.sh
+curl -sOJ 'https://raw.githubusercontent.com/avnet-iotconnect/iotc-python-lite-sdk/refs/heads/main/scripts/quickstart.sh' && bash ./quickstart.sh
 ``` 
+Or with wget:
+```shell
+wget -qN 'https://raw.githubusercontent.com/avnet-iotconnect/iotc-python-lite-sdk/refs/heads/main/scripts/quickstart.sh' && bash ./quickstart.sh
+```
+
 Follow the quickstart.sh script prompts.
 
 Successful output form running the quickstart should look like similar to this:
