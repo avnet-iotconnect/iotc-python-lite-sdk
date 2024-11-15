@@ -159,14 +159,14 @@ if ${do_download}; then
     QUICKSTART_PY_URL="https://raw.githubusercontent.com/avnet-iotconnect/iotc-python-lite-sdk/refs/heads/main/examples/quickstart.py"
   fi
 
-  echo "Downloading quickstart.py from ${QUICKSTART_PY_URL}"
+  echo "Downloading the quickstart Python source from ${QUICKSTART_PY_URL}..."
 
   if ${use_curl}; then
     curl -sOJ "${QUICKSTART_PY_URL}"
   else
     wget -qN "${QUICKSTART_PY_URL}"
   fi
-  echo "Download complete"
+  echo "Download complete."
 fi
 
 cat <<END
