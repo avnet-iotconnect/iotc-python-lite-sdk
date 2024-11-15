@@ -8,6 +8,7 @@ set -e
 # workaround for Git bash failing with subject formatting error for openssl
 export MSYS_NO_PATHCONV=1
 
+use_curl=true
 
 function check_sdk {
   if ! python3 -c 'from avnet.iotconnect.sdk.lite import Client' > /dev/null; then
@@ -31,7 +32,9 @@ function has {
     exit 128
   fi
   if ! command -v "$1" &> /dev/null; then
-    echo "Error: ${1} was not found. Please make sure to install it." >&2
+    if [[ -n "${1}" ]]; then
+      echo "Error: ${1} was not found. Please make sure to install it." >&2
+    fi
     return 1
   fi
   return 0
@@ -74,10 +77,16 @@ function gencert {
 
 has python3 || exit 3
 has openssl || exit 4
-has curl || exit 5
+
+
+do_download=true
+if [[ -n "${NO_QUICKSTART_PY_URL_DOWNLOAD}" ]]; then
+  do_download=false
+fi
 
 check_python_version || exit 5
 check_sdk || exit 6
+
 
 if [[ -f "device-cert.pem" && -f "device-pkey.pem" ]]; then
   if askyn "It seems that the device certificate and key already exist. Do you want to overwrite them?"; then
@@ -108,40 +117,56 @@ cat <<END
 - Click the "Paper and Cog" icon at top right to download your device configuration file.
 END
 
+paste_config_json=true
 if [[ -f "iotcDeviceConfig.json" ]]; then
-  askyn "It seems that the iotcDeviceConfig.json already exists. Do you want to overwrite it?" || ( print "Exiting..."; exit 2 )
-fi
-
-cat <<END
-Open the downloaded file in a text editor and paste the content into this terminal and hit ENTER to add the last line:
-END
-
-echo > iotcDeviceConfig.json
-while true; do
-  read -r line
-  echo "${line}" >> iotcDeviceConfig.json
-  if [[ "${line}" == "}" ]]; then
-    break
+  if ! askyn "It seems that the iotcDeviceConfig.json already exists. Do you want to overwrite it?"; then
+    paste_config_json=false
   fi
-done
-
-do_download=true
-if [[ -n "${NO_QUICKSTART_PY_DOWNLOAD}" ]]; then
-  do_download=false
 fi
 
-if [[ $do_download && -f quickstart.py ]]; then
+if ${paste_config_json} ]]; then
+  echo "Open the downloaded file in a text editor and paste the content into this terminal and press ENTER to add the last line:"
+
+  echo > iotcDeviceConfig.json
+  while true; do
+    read -r line
+    echo "${line}" >> iotcDeviceConfig.json
+    if [[ "${line}" == "}" ]]; then
+      break
+    fi
+  done
+
+fi # paste_config_json
+
+if [[ ${do_download} && -f quickstart.py ]]; then
   if ! askyn "It seems that the quickstart.py already exists. Do you want to overwrite it?"; then
     do_download=false
   fi
 fi
 
-if [[ $do_download ]]; then
-  echo "Downloading quickstart.py... (TBD)"
-  if [[ -z "${QUICKSTART_PY}" ]]; then
-    QUICKSTART_PY="https://raw.githubusercontent.com/avnet-iotconnect/iotc-python-lite-sdk/refs/heads/main/examples/quickstart.py"
+if ${do_download}; then
+  if ! has cccurl; then
+    if has wget; then
+      echo "Using wget to download..."
+      use_curl=false
+    else
+      echo "No curl or wget found on this system. Please install one of the tools." >&2
+      exit 5
+    fi
   fi
-  curl -sOJ "${QUICKSTART_PY}"
+
+  if [[ -z "${QUICKSTART_PY_URL}" ]]; then
+    QUICKSTART_PY_URL="https://raw.githubusercontent.com/avnet-iotconnect/iotc-python-lite-sdk/refs/heads/main/examples/quickstart.py"
+  fi
+
+  echo "Downloading quickstart.py from ${QUICKSTART_PY_URL}"
+
+  if ${use_curl}; then
+    curl -sOJ "${QUICKSTART_PY_URL}"
+  else
+    wget -qN "${QUICKSTART_PY_URL}"
+  fi
+  echo "Download complete"
 fi
 
 cat <<END

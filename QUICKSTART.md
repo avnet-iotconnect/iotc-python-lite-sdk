@@ -6,7 +6,11 @@ on your PC.
 The guide uses to a bash shell command prompt. The best way to get bash on
 Windows is to install Git for Windows.
 
-Additionally, you will need openssl and curl.
+Openssl is required as an executable.
+
+Additionally, curl or wget is required to download quickstart.py.
+If quickstart.py can be placed in the working directory by other means,
+then the requirement can be bypassed.
 
 If you have previously installed the standard [Iotconnect Python SDK](https://github.com/avnet-iotconnect/iotc-python-sdk)
 please note that you will not be able to use it alongside the Lite SDK,
