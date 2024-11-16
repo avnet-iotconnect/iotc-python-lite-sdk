@@ -58,7 +58,7 @@ def filter_init(cls):
 @filter_init
 @dataclass
 class D:
-    ec: int = field(default=0)  # Set a default value for Python 3.7 compatibility
+    ec: int = field(default=0)
 
 
 @filter_init

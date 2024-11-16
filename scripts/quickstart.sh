@@ -18,10 +18,10 @@ function check_sdk {
 
 function check_python_version {
   ver=$(python3 -c 'import sys; v=sys.version_info; print("%02d.%02d" % (v.major, v.minor))')
-  if [[ "${ver}" > "03.07" ]]; then
+  if [[ ! "${ver}" < "03.09" ]]; then
     return 0
   else
-    echo "Python version should be greater or equal to 3.7" >&2
+    echo "Python version should be greater or equal to 3.9" >&2
     return 1
   fi
 }
