@@ -3,8 +3,22 @@
 # Authors: Nikola Markovic <nikola.markovic@avnet.com> et al.
 
 import json
-from dataclasses import fields, is_dataclass, field, dataclass
+from dataclasses import fields, is_dataclass
 from datetime import datetime, timedelta
+
+
+def dict_filter_empty(input_dict: dict):
+    return {k: v for k, v in input_dict.items() if v is not None}
+
+
+def dataclass_factory_filter_empty(data):
+    return {key: value for key, value in data if value is not None}
+
+
+def to_json(obj):
+    return json.loads(
+        json.dumps(obj, default=lambda o: getattr(o, '__dict__', str(o)))
+    )
 
 
 def filter_init(cls):
@@ -55,24 +69,6 @@ def filter_init(cls):
     return cls
 
 
-@filter_init
-@dataclass
-class D:
-    ec: int = field(default=0)
-
-
-@filter_init
-@dataclass
-class Main:
-    d: D = field(default_factory=D)  # Use default_factory to handle nested dataclass initialization
-
-
-def to_json(obj):
-    return json.loads(
-        json.dumps(obj, default=lambda o: getattr(o, '__dict__', str(o)))
-    )
-
-
 class Timing:
     def __init__(self):
         self.t = datetime.now()
@@ -89,7 +85,7 @@ class Timing:
     def diff_with(self, t: datetime) -> timedelta:
         return t - self.t
 
-    def lap(self, do_print=True) -> timedelta:
+    def reset(self, do_print=True) -> timedelta:
         ret = self.diff_next()
         if do_print:
             print("timing: ", ret)
