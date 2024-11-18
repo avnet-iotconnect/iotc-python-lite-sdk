@@ -5,7 +5,7 @@
 import json
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from json import JSONDecodeError
 from ssl import SSLError
@@ -15,8 +15,9 @@ from paho.mqtt.client import CallbackAPIVersion, MQTTErrorCode, DisconnectFlags,
 from paho.mqtt.client import Client as PahoClient
 from paho.mqtt.reasoncodes import ReasonCode
 
-from avnet.iotconnect.sdk.sdklib.protocol.mqtt import ProtocolC2dMessageJson
-from avnet.iotconnect.sdk.sdklib.util import Timing
+from avnet.iotconnect.sdk.sdklib.protocol.c2d import ProtocolC2dMessageJson
+from avnet.iotconnect.sdk.sdklib.protocol.d2c import ProtocolD2cTelemetryMessageJson, ProtocolD2cTelemetryEntryJson
+from avnet.iotconnect.sdk.sdklib.util import Timing, dict_filter_empty, dataclass_factory_filter_empty
 from .config import DeviceConfig
 from .dra import DeviceRestApi
 
@@ -24,6 +25,7 @@ from .dra import DeviceRestApi
 TelemetryValueObjectType = dict[str, Union[None, str, int, float, bool, tuple[float, float]]]
 TelemetryValueType = Union[None, str, int, float, bool, tuple[float, float], TelemetryValueObjectType]
 TelemetryValues = dict[str, TelemetryValueType]
+
 
 @dataclass
 class TelemetryRecord:
@@ -37,6 +39,7 @@ class TelemetryRecord:
         self.timestamp = Client.timestamp_now()
         return self
 
+
 class C2dMessageType:
     # don't use actual enum because we want to allow "unknown" message types
     COMMAND: Final[int] = 0
@@ -49,6 +52,7 @@ class C2dMessageType:
         if value is None:
             return C2dMessageType.UNDEFINED
         return value
+
 
 class C2dCommand:
     def __init__(self, packet: ProtocolC2dMessageJson):
@@ -64,10 +68,12 @@ class C2dCommand:
             self.command_args = []
             self.command_raw = ""
 
+
 class C2dOta:
     class Url:
         def __init__(self, entry: dict[str, str]):
             self.url = entry['url']
+
     def __init__(self, packet: ProtocolC2dMessageJson):
         self.message_type = C2dMessageType.parse(packet.ct)
         self.ack_id = packet.ack
@@ -100,6 +106,7 @@ class Callbacks:
         and second a boolean indicating whether a disconnect request was received from the server.
         Use this callback to asynchronously react to the back end disconnection event rather than polling Client.is_connected.
     """
+
     def __init__(
             self,
             command_cb: Optional[Callable[[C2dCommand], None]] = None,
@@ -116,7 +123,7 @@ class ClientSettings:
 
     def __init__(
             self,
-            verbose = True,
+            verbose: bool = True,
             connect_timeout_secs: int = 30,
             connect_tries: int = 100,
             connect_backoff_secs: int = 10
@@ -129,6 +136,7 @@ class ClientSettings:
             raise ValueError("connect_timeout_secs must be greater than 1")
         if connect_tries < 1:
             raise ValueError("connect_tries must be greater than 1")
+
 
 class Client:
     """
@@ -191,7 +199,6 @@ class Client:
 
     """
 
-
     def __init__(
             self,
             config: DeviceConfig,
@@ -202,7 +209,7 @@ class Client:
         self.user_callbacks = callbacks or Callbacks()
         self.settings = settings or ClientSettings()
 
-        self.mqtt_config = DeviceRestApi(config).get_identity_data() # can raise DeviceConfigError
+        self.mqtt_config = DeviceRestApi(config).get_identity_data()  # can raise DeviceConfigError
 
         self.mqtt = PahoClient(
             callback_api_version=CallbackAPIVersion.VERSION2,
@@ -325,11 +332,21 @@ class Client:
 
         """
 
-        iotc_json = Client._to_iotconnect_json(records)
         if not self.is_connected():
             print('Message NOT sent. Not connected!')
             return None
         else:
+            packet = ProtocolD2cTelemetryMessageJson()
+            for r in records:
+                packet_entry = ProtocolD2cTelemetryEntryJson(
+                    d=r.values,
+                    dt=None if r.timestamp is None else r.timestamp.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                    id=r.unique_id,
+                    tg=r.tag
+                )
+                packet.d.append(dict_filter_empty(asdict(packet_entry, dict_factory=dataclass_factory_filter_empty)))
+            iotc_json = json.dumps(asdict(packet), separators=(',', ':'))
+
             ret = self.mqtt.publish(
                 topic=self.mqtt_config.topics.rpt,
                 qos=1,
@@ -337,32 +354,6 @@ class Client:
             )
             print(">", iotc_json)
             return ret
-
-    @classmethod
-    def _to_iotconnect_json(cls, records: list[TelemetryRecord]) -> str:
-        def to_iotconnect_data(r: TelemetryRecord):
-            iotc_record_json = {
-                'd': r.values
-            }
-
-            if r.timestamp:
-                iotc_record_json['dt'] = r.timestamp.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-            if r.unique_id:
-                iotc_record_json['id'] = r.unique_id
-            if r.tag:
-                iotc_record_json['tg'] = r.tag
-
-            return iotc_record_json
-
-        t = {
-            'd': []
-        }
-        for entry in records:
-            # TODO: Validate:
-            # if not isinstance(entry.values, TelemetryValues):
-            #    # simple dict is fine, but check that the data is valid by converting it to our clas            #    entry.values = TelemetryValues(entry.values)
-            t['d'].append(dict(to_iotconnect_data(entry)))
-        return json.dumps(t, separators=(',', ':'))
 
     def _process_c2d_message(self, topic: str, payload: str) -> bool:
         # msg: C2dMessage = None
@@ -413,7 +404,7 @@ class Client:
 
         def log_callback(client, userdata, level, buf):
             print("%d [%s]: %s" % (t.diff_now().microseconds / 1000, str(level), buf))
-            t.lap(False)
+            t.reset(False)
 
         if len(command_args) >= 1:
             host = command_args[0]
@@ -429,7 +420,7 @@ class Client:
                 if not self.is_connected():
                     print('(re)connecting to', self.mqtt_config.h)
                     self.connect()
-                    connected_time.lap(False)  # reset the timer
+                    connected_time.reset(False)  # reset the timer
                 else:
                     if connected_time.diff_now().seconds > 60:
                         print("Stayed connected for too long. resetting the connection")
