@@ -5,24 +5,25 @@
 # The JSON to object mapping was originally created with assistance from OpenAI's ChatGPT.
 # For more information about ChatGPT, visit https://openai.com/
 
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass, field, fields
+from typing import Optional, List
 
-from avnet.iotconnect.sdk.sdklib.util import filter_init
+from avnet.iotconnect.sdk.sdklib.util import add_from_dict
 
-
-@filter_init
+@add_from_dict
 @dataclass
 class ProtocolC2dUrlJson:
-    url: Optional[str] = field(default=None)
-    fileName: Optional[str] = field(default=None)
+    url: str = field(default=None)
+    fileName: str = field(default=None)
 
-@filter_init
+@add_from_dict
 @dataclass
 class ProtocolC2dMessageJson:
-    urls: Optional[list[ProtocolC2dUrlJson]] = field(default_factory=list[ProtocolC2dUrlJson])
     ct: Optional[int] = field(default=None)
     cmd: Optional[str] = field(default=None)
     sw: Optional[str] = field(default=None)
     hw: Optional[str] = field(default=None)
     ack: Optional[str] = field(default=None)
+    urls: List[ProtocolC2dUrlJson] = field(default_factory=list) # this cannot be optional. It throws off dataclass
+
+

@@ -2,6 +2,10 @@
 # Copyright (C) 2024 Avnet
 # Authors: Nikola Markovic <nikola.markovic@avnet.com> et al.
 
+# The JSON to object mapping was originally created with assistance from OpenAI's ChatGPT.
+# For more information about ChatGPT, visit https://openai.com/
+
+
 import json
 from dataclasses import fields, is_dataclass
 from datetime import datetime, timedelta
@@ -19,6 +23,30 @@ def to_json(obj):
     return json.loads(
         json.dumps(obj, default=lambda o: getattr(o, '__dict__', str(o)))
     )
+
+
+def add_from_dict(cls):
+    def from_dict_function(input_dict):
+        field_names = {fld.name for fld in fields(cls)}
+        field_types = {fld.name: fld.type for fld in fields(cls)}
+        processed_fields = {}
+
+        for key, value in input_dict.items():
+            if key in field_names:
+                field_type = field_types[key]
+                if hasattr(field_type, '__origin__') and field_type.__origin__ == list:
+                    # Handle list of dataclasses
+                    inner_type = field_type.__args__[0]
+                    if hasattr(inner_type, 'from_dict'):
+                        processed_fields[key] = [inner_type.from_dict(item) for item in value]
+                    else:
+                        processed_fields[key] = value
+                else:
+                    processed_fields[key] = value
+        return cls(**processed_fields)
+
+    cls.from_dict = from_dict_function
+    return cls
 
 
 def filter_init(cls):
@@ -49,6 +77,7 @@ def filter_init(cls):
     data = {"field1": 10, "field2": "hello", "extra_field": "ignored"}
     obj = Example(data)  # Initializes Example(field1=10, field2="hello") and ignores "extra_field"
     """
+
     original_init = cls.__init__
 
     def __init__(self, input_dict):
@@ -67,7 +96,6 @@ def filter_init(cls):
 
     cls.__init__ = __init__
     return cls
-
 
 class Timing:
     def __init__(self):

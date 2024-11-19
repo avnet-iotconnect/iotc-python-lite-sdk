@@ -8,7 +8,10 @@
 from dataclasses import dataclass, field
 from typing import Optional, Any
 
+from avnet.iotconnect.sdk.sdklib.util import add_from_dict
 
+
+@add_from_dict
 @dataclass
 class ProtocolD2cTelemetryEntryJson:
     d: dict[str, Any] = field(default_factory=dict)
