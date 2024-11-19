@@ -1,5 +1,5 @@
 # Introduction
-This project is the Python Lite Client (SDK)
+This project is the IoTConnect Python Lite Client (SDK)
 that aims for a modern, intuitive and robust interface to connect your
 Linux, Windows or MacOS devices to the Avnet IoTConnect platform.
 
