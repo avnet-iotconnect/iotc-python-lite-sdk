@@ -15,9 +15,10 @@ from paho.mqtt.client import CallbackAPIVersion, MQTTErrorCode, DisconnectFlags,
 from paho.mqtt.client import Client as PahoClient
 from paho.mqtt.reasoncodes import ReasonCode
 
-from avnet.iotconnect.sdk.sdklib.protocol.c2d import ProtocolC2dMessageJson
+from avnet.iotconnect.sdk.sdklib.protocol.c2d import ProtocolC2dMessageJson, ProtocolC2dOtaJson, ProtocolC2dCommandJson
 from avnet.iotconnect.sdk.sdklib.protocol.d2c import ProtocolD2cTelemetryMessageJson, ProtocolD2cTelemetryEntryJson
-from avnet.iotconnect.sdk.sdklib.util import Timing, dict_filter_empty, dataclass_factory_filter_empty
+from avnet.iotconnect.sdk.sdklib.util import Timing, dict_filter_empty, dataclass_factory_filter_empty, deserialize_dataclass
+from .c2d import C2dOta, C2dMessage, C2dCommand
 from .config import DeviceConfig
 from .dra import DeviceRestApi
 
@@ -44,7 +45,7 @@ class C2dMessageType:
     # don't use actual enum because we want to allow "unknown" message types
     COMMAND: Final[int] = 0
     OTA: Final[int] = 1
-    MODULE_COMMAND: Final[int] = 2
+    MODULE_COMMAND: Final[int]      = 2
     UNDEFINED: Final[int] = 0xFFFF
 
     @classmethod
@@ -54,44 +55,6 @@ class C2dMessageType:
         return value
 
 
-class C2dCommand:
-    def __init__(self, packet: ProtocolC2dMessageJson):
-        self.message_type = C2dMessageType.parse(packet.ct)
-        self.ack_id = packet.ack
-        if packet.cmd is not None:
-            cmd_split = packet.cmd.split()
-            self.command_name = cmd_split[0]
-            self.command_args = cmd_split[1:]
-            self.command_raw = packet.cmd
-        else:
-            self.command_name = None
-            self.command_args = []
-            self.command_raw = ""
-
-
-class C2dOta:
-    class Url:
-        def __init__(self, entry: dict[str, str]):
-            self.url = entry['url']
-
-    def __init__(self, packet: ProtocolC2dMessageJson):
-        self.message_type = C2dMessageType.parse(packet.ct)
-        self.ack_id = packet.ack
-        if packet.urls is not None:
-            self.urls = packet.urls
-        else:
-            self.urls = []
-        if packet.cmd is not None:
-            cmd_split = packet.cmd.split()
-            self.command_name = cmd_split[0]
-            self.command_args = cmd_split[1:]
-            self.command_raw = packet.cmd
-        else:
-            self.command_name = None
-            self.command_args = []
-            self.command_raw = ""
-
-
 class Callbacks:
     """
     Specify callbacks for C2D command, OTA (not implemented yet) or MQTT disconnection.
@@ -99,7 +62,7 @@ class Callbacks:
     :param command_cb: Callback function with first parameter being C2dCommand object.
         Use this callback to process commands sent by the back end.
 
-    :param ota_cb: (TODO: Not yet implemented) Callback function with first parameter being C2dOta object.
+    :param ota_cb: Callback function with first parameter being C2dOta object.
         Use this callback to process OTA updates sent by the back end.
 
     :param disconnected_cb: Callback function with first parameter being string with reason for disconnect
@@ -110,12 +73,14 @@ class Callbacks:
     def __init__(
             self,
             command_cb: Optional[Callable[[C2dCommand], None]] = None,
-            ota_cb=None,
-            disconnected_cb: Optional[Callable[[str, bool], None]] = None
+            ota_cb: Optional[Callable[[C2dOta], None]] = None,
+            disconnected_cb: Optional[Callable[[str, bool], None]] = None,
+            generic_message_callbacks: dict [int, Callable[[C2dMessage, dict], None]]= None
     ):
         self.disconnected_cb = disconnected_cb
         self.command_cb = command_cb
         self.ota_cb = ota_cb
+        self.generic_message_callbacks = generic_message_callbacks or dict[int, C2dMessage]() # empty dict otherwise
 
 
 class ClientSettings:
@@ -126,12 +91,12 @@ class ClientSettings:
             verbose: bool = True,
             connect_timeout_secs: int = 30,
             connect_tries: int = 100,
-            connect_backoff_secs: int = 10
+            connect_backoff_max_secs: int = 15
     ):
         self.verbose = verbose
         self.connect_timeout_secs = connect_timeout_secs
         self.connect_tries = connect_tries
-        self.connect_backoff_secs = connect_backoff_secs
+        self.connect_backoff_max_secs = connect_backoff_max_secs
         if connect_timeout_secs < 1:
             raise ValueError("connect_timeout_secs must be greater than 1")
         if connect_tries < 1:
@@ -278,8 +243,7 @@ class Client:
                 # This could also be temporary, so keep trying
                 print("Failed to connect to host %s. Exception: %s" % (self.mqtt_config.host, str(ex)))
 
-            # TODO: make this onfigurable
-            backoff_ms = random.randrange(1000, 15000)
+            backoff_ms = random.randrange(1000, self.settings.connect_backoff_max_secs * 1000)
             print("Retrying connection... Backing off for %d ms." % backoff_ms)
             # Jitter back off a random number of milliseconds between 1 and 10 seconds.
             time.sleep(backoff_ms / 1000)
@@ -356,24 +320,43 @@ class Client:
             return ret
 
     def _process_c2d_message(self, topic: str, payload: str) -> bool:
-        # msg: C2dMessage = None
         try:
-            j = json.loads(payload)
-            pkt = ProtocolC2dMessageJson(j)
-            print("<", pkt)
-            msg = C2dCommand(pkt)
-            if msg.message_type == C2dMessageType.COMMAND:
-                if msg.command_name == 'aws-qualification-start':
-                    self._aws_qualification_start(msg.command_args)
-                elif self.user_callbacks.command_cb is not None:
+            # use the simplest form of ProtocolC2dMessageJson when deserializing first and
+            # convert message to appropriate json later
+            message_dict = json.loads(payload)
+            message_packet = deserialize_dataclass(ProtocolC2dMessageJson, message_dict)
+            message = C2dMessage(message_packet)
+
+            # if the user wants to handle this message type, stop processing further
+            generic_cb = self.user_callbacks.generic_message_callbacks.get(message.type)
+            if generic_cb is not None:
+                generic_cb(message, message_dict)
+                return True
+
+            if message.type == C2dMessageType.COMMAND:
+                msg = C2dCommand(deserialize_dataclass(ProtocolC2dCommandJson, message_dict))
+#               TODO: Deal with runtime qualification
+#               if msg.command_name == 'aws-qualification-start':
+#                    self._aws_qualification_start(msg.command_args)
+#                elif self.user_callbacks.command_cb is not None:
+                if self.user_callbacks.command_cb is not None:
                     self.user_callbacks.command_cb(msg)
-            elif msg.message_type == C2dMessageType.OTA:
-                if self.user_callbacks.ota_cb is not None:
-                    self.user_callbacks.ota_cb(msg)
-            elif msg.message_type == C2dMessageType.UNDEFINED:
-                print("Could not parse message type from message", payload)
+            elif message.type == C2dMessageType.OTA:
+                msg = C2dOta(deserialize_dataclass(ProtocolC2dOtaJson, message_dict))
+                if len(msg.urls) > 0:
+                    if self.user_callbacks.ota_cb is not None:
+                        self.user_callbacks.ota_cb(msg)
+                else:
+                    print("ERROR: Got OTA, but URLs list is empty!")
+            elif message.is_fatal:
+                print("Received C2D message %s from backend. Device should stop operation." % message.description)
+            elif message.needs_refresh:
+                print("Received C2D message %s from backend. Device should re-initialize the application." % message.description)
+            elif message.heartbeat_operation is not None:
+                operation_str = "start" if message.heartbeat_operation == True else "stop"
+                print("Received C2D message %s from backend. Device should %s heartbeat messages." % (message.description, operation_str))
             else:
-                print("Message type %d is not supported by this client. Message was:", msg.message_type, payload)
+                print("C2D Message parsing for message type %d is not supported by this client. Message was: %s" % (message_packet.ct, payload))
 
         except JSONDecodeError as jde:
             print('Error: Incoming message not parseable: "%s"' % payload)
@@ -412,13 +395,13 @@ class Client:
             self.mqtt_config.topics.rpt = 'qualification'
             self.mqtt_config.topics.c2d = 'qualification'
             self.mqtt_config.topics.ack = 'qualification'
-            self.mqtt_config.h = host
+            self.mqtt_config.host = host
             self.mqtt.on_log = log_callback
             self.disconnect()
             while True:
                 connected_time = Timing()
                 if not self.is_connected():
-                    print('(re)connecting to', self.mqtt_config.h)
+                    print('(re)connecting to', self.mqtt_config.host)
                     self.connect()
                     connected_time.reset(False)  # reset the timer
                 else:

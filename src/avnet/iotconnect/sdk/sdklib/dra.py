@@ -9,6 +9,7 @@ from typing import Final, Union
 from avnet.iotconnect.sdk.lite import DeviceConfig, DeviceConfigError
 from avnet.iotconnect.sdk.sdklib.protocol.discovery import IotcDiscoveryResponseJson
 from avnet.iotconnect.sdk.sdklib.protocol.identity import ProtocolIdentityPJson, ProtocolMetaJson, ProtocolIdentityResponseJson
+from avnet.iotconnect.sdk.sdklib.util import deserialize_dataclass
 
 
 class DeviceIdentityData:
@@ -108,7 +109,7 @@ class DraDeviceInfoParser:
 
         drd: IotcDiscoveryResponseJson
         try:
-            drd = IotcDiscoveryResponseJson(json.loads(discovery_response))
+            drd = deserialize_dataclass(IotcDiscoveryResponseJson, json.loads(discovery_response))
         except json.JSONDecodeError as json_error:
             raise DeviceConfigError("Discovery JSON Parsing Error: %s" % str(json_error))
         cls._parsing_common("Discovery", drd)
@@ -122,10 +123,9 @@ class DraDeviceInfoParser:
     def parse_identity_response(cls, identity_response: str) -> DeviceIdentityData:
         ird: ProtocolIdentityResponseJson
         try:
-            ird = ProtocolIdentityResponseJson(json.loads(identity_response))
+            ird = deserialize_dataclass(ProtocolIdentityResponseJson, json.loads(identity_response))
         except json.JSONDecodeError as json_error:
             raise DeviceConfigError("Identity JSON Parsing Error: %s" % str(json_error))
         cls._parsing_common("Identity", ird)
 
         return DeviceIdentityData(ird.d.p, ird.d.meta)
-

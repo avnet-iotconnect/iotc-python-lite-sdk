@@ -6,23 +6,33 @@
 # For more information about ChatGPT, visit https://openai.com/
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, List
 
-from avnet.iotconnect.sdk.sdklib.util import filter_init
-
-
-@filter_init
-@dataclass
-class ProtocolC2dUrlJson:
-    url: Optional[str] = field(default=None)
-    fileName: Optional[str] = field(default=None)
-
-@filter_init
 @dataclass
 class ProtocolC2dMessageJson:
-    urls: Optional[list[ProtocolC2dUrlJson]] = field(default_factory=list[ProtocolC2dUrlJson])
+    ct: Optional[int] = field(default=None)
+    ack: Optional[str] = field(default=None)
+    df: Optional[int] = field(default=None)
+    f: Optional[int] = field(default=None)
+
+@dataclass
+class ProtocolC2dCommandJson:
+    ct: Optional[int] = field(default=None)
+    cmd: Optional[str] = field(default=None)
+    ack: Optional[str] = field(default=None)
+
+
+@dataclass
+class ProtocolC2dUrlJson:
+    url: str = field(default=None)
+    fileName: str = field(default=None)
+
+
+@dataclass
+class ProtocolC2dOtaJson:
     ct: Optional[int] = field(default=None)
     cmd: Optional[str] = field(default=None)
     sw: Optional[str] = field(default=None)
     hw: Optional[str] = field(default=None)
     ack: Optional[str] = field(default=None)
+    urls: List[ProtocolC2dUrlJson] = field(default_factory=list)  # this cannot be optional. It throws off dataclass

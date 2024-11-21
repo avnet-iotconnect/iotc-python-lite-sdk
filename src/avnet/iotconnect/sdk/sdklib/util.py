@@ -2,9 +2,13 @@
 # Copyright (C) 2024 Avnet
 # Authors: Nikola Markovic <nikola.markovic@avnet.com> et al.
 
-import json
+# The JSON to object mapping was originally created with assistance from OpenAI's ChatGPT.
+# For more information about ChatGPT, visit https://openai.com/
+
+
 from dataclasses import fields, is_dataclass
 from datetime import datetime, timedelta
+from typing import get_type_hints, Type, Union, TypeVar
 
 
 def dict_filter_empty(input_dict: dict):
@@ -15,10 +19,51 @@ def dataclass_factory_filter_empty(data):
     return {key: value for key, value in data if value is not None}
 
 
-def to_json(obj):
-    return json.loads(
-        json.dumps(obj, default=lambda o: getattr(o, '__dict__', str(o)))
-    )
+T = TypeVar("T")
+
+
+def deserialize_dataclass(cls: Type[T], data: Union[dict, list]) -> T:
+    """
+    Recursively deserialize data into a dataclass or a list of dataclasses.
+    """
+    if isinstance(data, list):
+        # Handle lists of dataclasses
+        inner_type = cls.__args__[0] if hasattr(cls, '__args__') else None
+        if inner_type and is_dataclass(inner_type):
+            return [deserialize_dataclass(inner_type, item) for item in data]
+        return data
+
+    if isinstance(data, dict) and is_dataclass(cls):
+        field_types = get_type_hints(cls)
+        return cls(
+            **{
+                key: deserialize_dataclass(field_types[key], value)
+                if key in field_types and _is_optional_or_dataclass(field_types[key], value)
+                else (
+                    deserialize_dataclass(field_types[key], value)
+                    if key in field_types
+                       and hasattr(field_types[key], '__origin__')
+                       and field_types[key].__origin__ == list
+                    else value
+                )
+                for key, value in data.items()
+                if key in field_types  # Ignore unexpected fields
+            }
+        )
+    return data
+
+
+def _is_optional_or_dataclass(field_type, value):
+    """
+    Check if a field type is either an Optional or a dataclass.
+    """
+    if hasattr(field_type, '__origin__') and field_type.__origin__ is Union:
+        # Check for Optional[Type]
+        inner_types = field_type.__args__
+        if len(inner_types) == 2 and type(None) in inner_types:
+            inner_type = [t for t in inner_types if t is not type(None)][0]
+            return is_dataclass(inner_type)
+    return is_dataclass(field_type)
 
 
 def filter_init(cls):
@@ -49,6 +94,7 @@ def filter_init(cls):
     data = {"field1": 10, "field2": "hello", "extra_field": "ignored"}
     obj = Example(data)  # Initializes Example(field1=10, field2="hello") and ignores "extra_field"
     """
+
     original_init = cls.__init__
 
     def __init__(self, input_dict):
