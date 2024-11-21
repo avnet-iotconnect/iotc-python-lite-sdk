@@ -8,10 +8,7 @@
 from dataclasses import dataclass, field
 from typing import Optional
 
-from avnet.iotconnect.sdk.sdklib.util import filter_init
 
-
-@filter_init
 @dataclass
 class ProtocolMetaJson:
     at: Optional[int] = None
@@ -25,7 +22,6 @@ class ProtocolMetaJson:
     v: float = field(default=0.0)
 
 
-@filter_init
 @dataclass
 class ProtocolHasJson:
     d: int = field(default=0)
@@ -35,7 +31,6 @@ class ProtocolHasJson:
     ota: int = field(default=0)
 
 
-@filter_init
 @dataclass
 class ProtocolSetJson:
     pub: Optional[str] = None
@@ -44,7 +39,6 @@ class ProtocolSetJson:
     subForAll: Optional[str] = None
 
 
-@filter_init
 @dataclass
 class ProtocolTopicsJson:
     rpt: Optional[str] = None
@@ -58,7 +52,6 @@ class ProtocolTopicsJson:
     set: ProtocolSetJson = field(default_factory=ProtocolSetJson)
 
 
-@filter_init
 @dataclass
 class ProtocolIdentityPJson:
     n: Optional[str] = None
@@ -69,7 +62,6 @@ class ProtocolIdentityPJson:
     topics: ProtocolTopicsJson = field(default_factory=ProtocolTopicsJson)
 
 
-@filter_init
 @dataclass
 class ProtocolIdentityDJson:
     ec: int = field(default=0)
@@ -80,7 +72,6 @@ class ProtocolIdentityDJson:
     dt: Optional[str] = None
 
 
-@filter_init
 @dataclass
 class ProtocolIdentityResponseJson:
     d: ProtocolIdentityDJson = field(default_factory=ProtocolIdentityDJson)

@@ -11,6 +11,7 @@ from typing import Optional
 
 from .error import DeviceConfigError
 from avnet.iotconnect.sdk.sdklib.protocol.files import ProtocolDeviceConfigJson
+from ..sdklib.util import deserialize_dataclass
 
 
 @dataclass
@@ -116,7 +117,7 @@ class DeviceConfig:
         """ Return a class instance based on a downloaded iotcDeviceConfig.json fom device's Info panel in IoTConnect"""
         file_content = cls._validate_file(device_config_json_path)
         file_dict = json.loads(file_content)
-        pdcj = ProtocolDeviceConfigJson(file_dict)
+        pdcj = deserialize_dataclass(ProtocolDeviceConfigJson, file_dict)
         return cls.from_iotc_device_config_json(pdcj, device_cert_path=device_cert_path, device_pkey_path=device_pkey_path, server_ca_cert_path=server_ca_cert_path)
 
     @classmethod

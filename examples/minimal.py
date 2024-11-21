@@ -5,9 +5,9 @@
 import random
 import time
 
-from avnet.iotconnect.sdk.lite import Client
+from avnet.iotconnect.sdk.lite import Client, C2dCommand
 from avnet.iotconnect.sdk.lite import __version__ as SDK_VERSION
-from avnet.iotconnect.sdk.lite.client import DeviceConfig, Callbacks, C2dCommand
+from avnet.iotconnect.sdk.lite.client import DeviceConfig, Callbacks
 
 
 def on_command(msg: C2dCommand):

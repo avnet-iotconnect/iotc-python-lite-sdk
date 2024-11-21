@@ -9,7 +9,7 @@ from dataclasses import dataclass, asdict
 
 from avnet.iotconnect.sdk.lite import Client, DeviceConfig, C2dCommand, TelemetryRecord, Callbacks, DeviceConfigError
 from avnet.iotconnect.sdk.lite import __version__ as SDK_VERSION
-from avnet.iotconnect.sdk.lite.client import C2dOta
+from avnet.iotconnect.sdk.lite.c2d import C2dOta
 
 """
 See minimal.py example for a way to configure the device without the JSON file
@@ -46,8 +46,7 @@ def on_command(msg: C2dCommand):
 
 def on_ota(msg: C2dOta):
     # We just print the URL. The actual handling of the OTA request would be project specific.
-    print("Received OTA request. File: %s URL: %s" % (msg.urls[0].file_name, msg.urls[0].url))
-
+    print("Received OTA request. File: %s Version: %s URL: %s" % (msg.urls[0].file_name, msg.version, msg.urls[0].url))
 
 def on_disconnect(reason: str, disconnected_from_server: bool):
     print("Disconnected%s. Reason: %s" % (" from server" if disconnected_from_server else "", reason))

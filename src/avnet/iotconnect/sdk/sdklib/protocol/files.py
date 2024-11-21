@@ -8,10 +8,7 @@
 from dataclasses import dataclass, field
 from typing import Optional
 
-from avnet.iotconnect.sdk.sdklib.util import filter_init
 
-
-@filter_init
 @dataclass
 class ProtocolDeviceConfigJson:
     cpid: Optional[str] = field(default=None)
@@ -21,4 +18,4 @@ class ProtocolDeviceConfigJson:
     disc: Optional[str] = field(default=None)
     ver: Optional[str] = field(default="2.1")
     pf: Optional[str] = field(default="aws")
-    at: Optional[int] = field(default=7)          # authentication type, but ignored for now
+    at: Optional[int] = field(default=7)  # authentication type, but ignored for now

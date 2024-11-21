@@ -15,9 +15,10 @@ from paho.mqtt.client import CallbackAPIVersion, MQTTErrorCode, DisconnectFlags,
 from paho.mqtt.client import Client as PahoClient
 from paho.mqtt.reasoncodes import ReasonCode
 
-from avnet.iotconnect.sdk.sdklib.protocol.c2d import ProtocolC2dMessageJson, ProtocolC2dUrlJson
+from avnet.iotconnect.sdk.sdklib.protocol.c2d import ProtocolC2dMessageJson, ProtocolC2dOtaJson, ProtocolC2dCommandJson
 from avnet.iotconnect.sdk.sdklib.protocol.d2c import ProtocolD2cTelemetryMessageJson, ProtocolD2cTelemetryEntryJson
-from avnet.iotconnect.sdk.sdklib.util import Timing, dict_filter_empty, dataclass_factory_filter_empty
+from avnet.iotconnect.sdk.sdklib.util import Timing, dict_filter_empty, dataclass_factory_filter_empty, deserialize_dataclass
+from .c2d import C2dOta, C2dMessage, C2dCommand
 from .config import DeviceConfig
 from .dra import DeviceRestApi
 
@@ -54,46 +55,6 @@ class C2dMessageType:
         return value
 
 
-class C2dCommand:
-    def __init__(self, packet: ProtocolC2dMessageJson):
-        self.message_type = C2dMessageType.parse(packet.ct)
-        self.ack_id = packet.ack
-        if packet.cmd is not None:
-            cmd_split = packet.cmd.split()
-            self.command_name = cmd_split[0]
-            self.command_args = cmd_split[1:]
-            self.command_raw = packet.cmd
-        else:
-            self.command_name = None
-            self.command_args = []
-            self.command_raw = ""
-
-
-class C2dOta:
-    class Url:
-        def __init__(self, entry: ProtocolC2dUrlJson):
-            self.url = entry.url
-            self.file_name = entry.fileName
-
-    def __init__(self, packet: ProtocolC2dMessageJson):
-        self.message_type = C2dMessageType.parse(packet.ct)
-        self.ack_id = packet.ack
-        if packet.urls is not None and len(packet.urls) > 0:
-            self.urls : list[C2dOta.Url] = [C2dOta.Url(x) for x in  packet.urls]
-        else:
-            # we will let the client handle this case
-            self.urls : list[C2dOta.Url] = []
-        if packet.cmd is not None:
-            cmd_split = packet.cmd.split()
-            self.command_name = cmd_split[0]
-            self.command_args = cmd_split[1:]
-            self.command_raw = packet.cmd
-        else:
-            self.command_name = None
-            self.command_args = []
-            self.command_raw = ""
-
-
 class Callbacks:
     """
     Specify callbacks for C2D command, OTA (not implemented yet) or MQTT disconnection.
@@ -113,11 +74,13 @@ class Callbacks:
             self,
             command_cb: Optional[Callable[[C2dCommand], None]] = None,
             ota_cb: Optional[Callable[[C2dOta], None]] = None,
-            disconnected_cb: Optional[Callable[[str, bool], None]] = None
+            disconnected_cb: Optional[Callable[[str, bool], None]] = None,
+            generic_message_callbacks: dict [int, Callable[[C2dMessage, dict], None]]= None
     ):
         self.disconnected_cb = disconnected_cb
         self.command_cb = command_cb
         self.ota_cb = ota_cb
+        self.generic_message_callbacks = generic_message_callbacks or dict[int, C2dMessage]() # empty dict otherwise
 
 
 class ClientSettings:
@@ -357,30 +320,43 @@ class Client:
             return ret
 
     def _process_c2d_message(self, topic: str, payload: str) -> bool:
-        # msg: C2dMessage = None
         try:
-            pkt = ProtocolC2dMessageJson.from_dict(json.loads(payload))
-            print("<", pkt)
-            msg_type = C2dMessageType.parse(pkt.ct)
-            if msg_type == C2dMessageType.COMMAND:
-                msg = C2dCommand(pkt)
+            # use the simplest form of ProtocolC2dMessageJson when deserializing first and
+            # convert message to appropriate json later
+            message_dict = json.loads(payload)
+            message_packet = deserialize_dataclass(ProtocolC2dMessageJson, message_dict)
+            message = C2dMessage(message_packet)
+
+            # if the user wants to handle this message type, stop processing further
+            generic_cb = self.user_callbacks.generic_message_callbacks.get(message.type)
+            if generic_cb is not None:
+                generic_cb(message, message_dict)
+                return True
+
+            if message.type == C2dMessageType.COMMAND:
+                msg = C2dCommand(deserialize_dataclass(ProtocolC2dCommandJson, message_dict))
 #               TODO: Deal with runtime qualification
 #               if msg.command_name == 'aws-qualification-start':
 #                    self._aws_qualification_start(msg.command_args)
 #                elif self.user_callbacks.command_cb is not None:
                 if self.user_callbacks.command_cb is not None:
                     self.user_callbacks.command_cb(msg)
-            elif msg_type == C2dMessageType.OTA:
-                msg = C2dOta(pkt)
+            elif message.type == C2dMessageType.OTA:
+                msg = C2dOta(deserialize_dataclass(ProtocolC2dOtaJson, message_dict))
                 if len(msg.urls) > 0:
                     if self.user_callbacks.ota_cb is not None:
                         self.user_callbacks.ota_cb(msg)
                 else:
                     print("ERROR: Got OTA, but URLs list is empty!")
-            elif msg_type == C2dMessageType.UNDEFINED:
-                print("Could not parse message type from message", payload)
+            elif message.is_fatal:
+                print("Received C2D message %s from backend. Device should stop operation." % message.description)
+            elif message.needs_refresh:
+                print("Received C2D message %s from backend. Device should re-initialize the application." % message.description)
+            elif message.heartbeat_operation is not None:
+                operation_str = "start" if message.heartbeat_operation == True else "stop"
+                print("Received C2D message %s from backend. Device should %s heartbeat messages." % (message.description, operation_str))
             else:
-                print("Message type %d is not supported by this client. Message: %s :" % (msg_type, payload))
+                print("C2D Message parsing for message type %d is not supported by this client. Message was: %s" % (message_packet.ct, payload))
 
         except JSONDecodeError as jde:
             print('Error: Incoming message not parseable: "%s"' % payload)
