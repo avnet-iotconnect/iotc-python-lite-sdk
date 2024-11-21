@@ -9,7 +9,7 @@ from dataclasses import dataclass, asdict
 
 from avnet.iotconnect.sdk.lite import Client, DeviceConfig, C2dCommand, TelemetryRecord, Callbacks, DeviceConfigError
 from avnet.iotconnect.sdk.lite import __version__ as SDK_VERSION
-from avnet.iotconnect.sdk.lite.c2d import C2dOta
+from avnet.iotconnect.sdk.sdklib.c2d import C2dOta
 
 """
 See minimal.py example for a way to configure the device without the JSON file

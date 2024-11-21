@@ -18,7 +18,7 @@ from paho.mqtt.reasoncodes import ReasonCode
 from avnet.iotconnect.sdk.sdklib.protocol.c2d import ProtocolC2dMessageJson, ProtocolC2dOtaJson, ProtocolC2dCommandJson
 from avnet.iotconnect.sdk.sdklib.protocol.d2c import ProtocolD2cTelemetryMessageJson, ProtocolD2cTelemetryEntryJson
 from avnet.iotconnect.sdk.sdklib.util import Timing, dict_filter_empty, dataclass_factory_filter_empty, deserialize_dataclass
-from .c2d import C2dOta, C2dMessage, C2dCommand
+from avnet.iotconnect.sdk.sdklib.c2d import C2dOta, C2dMessage, C2dCommand
 from .config import DeviceConfig
 from .dra import DeviceRestApi
 
