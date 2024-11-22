@@ -13,7 +13,7 @@ from typing import Optional
 
 from avnet.iotconnect.sdk.lite import Client, DeviceConfig, Callbacks, DeviceConfigError
 from avnet.iotconnect.sdk.lite import __version__ as SDK_VERSION
-from avnet.iotconnect.sdk.sdklib.c2d import C2dOta
+from avnet.iotconnect.sdk.sdklib.c2d_message import C2dOta
 
 """
 In this demo we demonstrate a simple example of how an OTA could be handled.

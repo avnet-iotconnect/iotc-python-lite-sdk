@@ -44,13 +44,13 @@ def exit_and_restart():
 
 def on_stop_message(msg: C2dMessage, message_dict: dict):
     global need_exit
-    print("Received stop message (%s). Exiting cleanly at next main loop iteration..." % msg.description)
+    print("Received stop message (%s). Exiting cleanly at next main loop iteration..." % msg.type_description)
     need_exit = True
 
 
 def on_restart_message(msg: C2dMessage, message_dict: dict):
     global need_restart
-    print("Received stop restart (%s). Restarting at next loop iteration..." % msg.description)
+    print("Received stop restart (%s). Restarting at next loop iteration..." % msg.type_description)
     need_restart = True
 
 
