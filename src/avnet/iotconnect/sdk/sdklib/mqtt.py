@@ -2,10 +2,25 @@
 # Copyright (C) 2024 Avnet
 # Authors: Nikola Markovic <nikola.markovic@avnet.com> et al.
 
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Union
+
 # This file contains definitions related to (inbound or outbound) C2D Messages
 
-from avnet.iotconnect.sdk.lite.client import C2dMessageType
 from avnet.iotconnect.sdk.sdklib.protocol.c2d import ProtocolC2dMessageJson, ProtocolCommandMessageJson, ProtocolOtaUrlJson, ProtocolOtaMessageJson
+
+# When type "object" is defined in IoTConnect, it cannot have nested objects inside of it.
+TelemetryValueObjectType = dict[str, Union[None, str, int, float, bool, tuple[float, float]]]
+TelemetryValueType = Union[None, str, int, float, bool, tuple[float, float], TelemetryValueObjectType]
+TelemetryValues = dict[str, TelemetryValueType]
+
+@dataclass
+class TelemetryRecord:
+    values: TelemetryValues
+    timestamp: datetime = None
+    unique_id: str = None
+    tag: str = None
 
 class C2dAck:
     """
@@ -101,7 +116,7 @@ class C2dMessage:
 
 class C2dCommand:
     def __init__(self, packet: ProtocolCommandMessageJson):
-        self.type = C2dMessageType.COMMAND  # Used for error checking when sending ACKs
+        self.type = C2dMessage.COMMAND  # Used for error checking when sending ACKs
         self.ack_id = packet.ack
         if packet.cmd is not None and len(packet.cmd) > 0:
             cmd_split = packet.cmd.split()
@@ -124,7 +139,7 @@ class C2dOta:
             self.file_name = entry.fileName
 
     def __init__(self, packet: ProtocolOtaMessageJson):
-        self.type = C2dMessageType.OTA  # Used for error checking when sending ACKs
+        self.type = C2dMessage.OTA  # Used for error checking when sending ACKs
         self.ack_id = packet.ack
         self.version = packet.sw  # along with OTA superset
         self.hardware_version = packet.hw
@@ -135,7 +150,7 @@ class C2dOta:
             self.urls: list[C2dOta.Url] = []
 
     def validate(self) -> bool:
-        if len(self.urls) > 0: return False
+        if len(self.urls) == 0: return False
         if self.ack_id is None or len(self.ack_id) == 0: return False # OTA must have ack ID
         for u in self.urls:
             if u is None: return False

@@ -33,5 +33,5 @@ class ProtocolAckDJson:
 
 @dataclass
 class ProtocolAckMessageJson:
+    d: ProtocolAckDJson = field(default_factory=ProtocolAckDJson)
     dt: Optional[str] = field(default=None)
-    d: ProtocolTelemetryEntryJson = field(default_factory=ProtocolAckDJson)

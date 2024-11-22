@@ -5,55 +5,22 @@
 import json
 import random
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict
 from datetime import datetime, timezone
 from json import JSONDecodeError
 from ssl import SSLError
-from typing import Union, Callable, Optional, Final, NoReturn
-from webbrowser import open_new_tab
+from typing import Callable, Optional
 
 from paho.mqtt.client import CallbackAPIVersion, MQTTErrorCode, DisconnectFlags, MQTTMessageInfo
 from paho.mqtt.client import Client as PahoClient
 from paho.mqtt.reasoncodes import ReasonCode
 
+from avnet.iotconnect.sdk.sdklib.mqtt import C2dOta, C2dMessage, C2dCommand, C2dAck, TelemetryRecord, TelemetryValueType
 from avnet.iotconnect.sdk.sdklib.protocol.c2d import ProtocolC2dMessageJson, ProtocolOtaMessageJson, ProtocolCommandMessageJson
-from avnet.iotconnect.sdk.sdklib.protocol.d2c import ProtocolTelemetryMessageJson, ProtocolTelemetryEntryJson, ProtocolAckDJson
-from avnet.iotconnect.sdk.sdklib.util import Timing, dict_filter_empty, dataclass_factory_filter_empty, deserialize_dataclass
-from avnet.iotconnect.sdk.sdklib.c2d_message import C2dOta, C2dMessage, C2dCommand, C2dAck
+from avnet.iotconnect.sdk.sdklib.protocol.d2c import ProtocolTelemetryMessageJson, ProtocolTelemetryEntryJson, ProtocolAckDJson, ProtocolAckMessageJson
+from avnet.iotconnect.sdk.sdklib.util import Timing, dataclass_factory_filter_empty, deserialize_dataclass
 from .config import DeviceConfig
 from .dra import DeviceRestApi
-
-# When type "object" is defined in IoTConnect, it cannot have nested objects inside of it.
-TelemetryValueObjectType = dict[str, Union[None, str, int, float, bool, tuple[float, float]]]
-TelemetryValueType = Union[None, str, int, float, bool, tuple[float, float], TelemetryValueObjectType]
-TelemetryValues = dict[str, TelemetryValueType]
-
-
-@dataclass
-class TelemetryRecord:
-    values: TelemetryValues
-    timestamp: datetime = None
-    unique_id: str = None
-    tag: str = None
-
-    def apply_timestamp(self):
-        """ Timestamps this TelemetryEntry with the current timestamp """
-        self.timestamp = Client.timestamp_now()
-        return self
-
-
-class C2dMessageType:
-    # don't use actual enum because we want to allow "unknown" message types
-    COMMAND: Final[int] = 0
-    OTA: Final[int] = 1
-    MODULE_COMMAND: Final[int]      = 2
-    UNDEFINED: Final[int] = 0xFFFF
-
-    @classmethod
-    def parse(cls, value: Union[int, None]) -> int:
-        if value is None:
-            return C2dMessageType.UNDEFINED
-        return value
 
 
 class Callbacks:
@@ -304,7 +271,7 @@ class Client:
             for r in records:
                 packet_entry = ProtocolTelemetryEntryJson(
                     d=r.values,
-                    dt=None if r.timestamp is None else r.timestamp.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                    dt=None if r.timestamp is None else Client._to_iotconnect_time_str(r.timestamp),
                     id=r.unique_id,
                     tg=r.tag
                 )
@@ -320,7 +287,8 @@ class Client:
                 print(">", iotc_json)
             return ret
 
-    def send_command_ack(self, original_message: C2dOta, status: int, message_str = None, ack_id: str = None):
+
+    def send_command_ack(self, original_message: C2dCommand, status: int, message_str = None):
         """
         Send Command acknowledgement.
 
@@ -329,19 +297,15 @@ class Client:
         :param message_str: (Optional) For example: 'LED color now "blue"', or 'LED color "red" not supported'
         """
 
-        ack_id_to_send = ack_id
-        if original_message is not None:
-            if original_message.type != C2dMessageType.COMMAND:
-                print('Error: Called send_command_ack(), but message is not a command!')
-                return
-            ack_id_to_send = original_message.ack_id
-        if ack_id_to_send is None or len(ack_id_to_send) == 0:
-            print('Error: Message ACK ID missing. Ensure to set "Acknowledgement Required" in your template for %s!' % original_message.command_name)
+        if original_message.type != C2dMessage.COMMAND:
+            print('Error: Called send_command_ack(), but message is not a command!')
+            return
         self.send_ack(
             ack_id=original_message.ack_id,
             message_type=original_message.type,
             status=status,
-            message_str=message_str
+            message_str=message_str,
+            original_command=original_message.command_name
         )
 
     def send_ota_ack(self, original_message: C2dOta, status: int, message_str = None):
@@ -352,10 +316,19 @@ class Client:
         :param original_message: The original message that was received in the callback.
         :param status: For example: C2dAck.OTA_DOWNLOAD_FAILED.
         :param message_str: (Optional) For example: "Failed to unzip the OTA package".
+        :param message_str: (Optional) For example: "Failed to unzip the OTA package".
         """
-        pass
+        if original_message.type != C2dMessage.OTA:
+            print('Error: Called send_ota_ack(), but message is not an OTA request!')
+            return
+        self.send_ack(
+            ack_id=original_message.ack_id,
+            message_type=original_message.type,
+            status=status,
+            message_str=message_str
+        )
 
-    def send_ack(self, ack_id: str, message_type: int, status: int, message_str: str = None):
+    def send_ack(self, ack_id: str, message_type: int, status: int, message_str: str = None, original_command: str = None):
         """
         Send Command or OTA ack while having only ACK ID
 
@@ -363,6 +336,8 @@ class Client:
         :param message_type: For example: C2dMessage.COMMAND or C2dMessage.OTA, .
         :param status: For example: C2dAck.CMD_FAILED or C2dAck.OTA_DOWNLOAD_DONE for command/OTA respectively.
         :param message_str: (Optional) For example: "Failed to unzip the OTA package", or 'LED color "red" not supported'
+        :param original_command: (Optional) If this argument is passed,
+            this command name will be printed along with any potential error messages.
 
         While the client should generally use send_ota_ack or send_command_ack, this method can be used in cases
         where the context of the original received message is not available (after OTA restart for example)
@@ -370,7 +345,10 @@ class Client:
         if not self.is_connected():
             print('Message NOT sent. Not connected!')
         elif ack_id is None or len(ack_id) == 0:
-            print('Error: Message ACK ID missing. Ensure to set "Acknowledgement Required" in your template for the command!')
+            if original_command is not None:
+                print('Error: Message ACK ID missing. Ensure to set "Acknowledgement Required" in the template for command %s!' % original_command)
+            else:
+                print('Error: Message ACK ID missing. Ensure to set "Acknowledgement Required" in the template the command!' % original_command)
             return
         elif message_type not in (C2dMessage.COMMAND, C2dMessage.OTA):
             print('Warning: Message type %d does not appear to be a valid message type!' % message_type)  # let it pass, just in case we can still somehow send different kind of ack
@@ -379,11 +357,13 @@ class Client:
         elif message_type == C2dMessage.OTA and not C2dAck.is_valid_ota_status(status):
             print('Warning: Status %d does not appear to be a valid OTA ACK status!' % status) # let it pass, just in case there is a new status
 
-        packet = ProtocolAckDJson(
-            ack=ack_id,
-            type=message_type,
-            st=status,
-            msg=message_str
+        packet = ProtocolAckMessageJson(
+            d=ProtocolAckDJson(
+                ack=ack_id,
+                type=message_type,
+                st=status,
+                msg=message_str
+            )
         )
         iotc_json = json.dumps(asdict(packet, dict_factory=dataclass_factory_filter_empty), separators=(',', ':'))
         ret = self.mqtt.publish(
@@ -395,6 +375,9 @@ class Client:
             print(">", iotc_json)
         return ret
 
+    @classmethod
+    def _to_iotconnect_time_str(cls, ts: datetime) -> str:
+        return ts.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     def _process_c2d_message(self, topic: str, payload: str) -> bool:
         # topic is ignored for now as we only subscribe to one
@@ -416,7 +399,7 @@ class Client:
                 generic_cb(message, message_dict)
                 return True
 
-            if message.type == C2dMessageType.COMMAND:
+            if message.type == C2dMessage.COMMAND:
                 msg = C2dCommand(deserialize_dataclass(ProtocolCommandMessageJson, message_dict))
                 if not msg.validate():
                     print("C2D Command is invalid: %s" % payload)
@@ -430,7 +413,7 @@ class Client:
                 else:
                     if self.settings.verbose:
                         print("WARN: Unhandled command %s received!" % msg.command_name)
-            elif message.type == C2dMessageType.OTA:
+            elif message.type == C2dMessage.OTA:
                 msg = C2dOta(deserialize_dataclass(ProtocolOtaMessageJson, message_dict))
                 if not msg.validate():
                     print("C2D Command is invalid: %s" % payload)
