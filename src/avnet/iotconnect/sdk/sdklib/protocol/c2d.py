@@ -5,6 +5,8 @@
 # The JSON to object mapping was originally created with assistance from OpenAI's ChatGPT.
 # For more information about ChatGPT, visit https://openai.com/
 
+# This file contains inbound message types
+
 from dataclasses import dataclass, field
 from typing import Optional, List
 
@@ -16,23 +18,23 @@ class ProtocolC2dMessageJson:
     f: Optional[int] = field(default=None)
 
 @dataclass
-class ProtocolC2dCommandJson:
+class ProtocolCommandMessageJson:
     ct: Optional[int] = field(default=None)
     cmd: Optional[str] = field(default=None)
     ack: Optional[str] = field(default=None)
 
 
 @dataclass
-class ProtocolC2dUrlJson:
+class ProtocolOtaUrlJson:
     url: str = field(default=None)
     fileName: str = field(default=None)
 
 
 @dataclass
-class ProtocolC2dOtaJson:
+class ProtocolOtaMessageJson:
     ct: Optional[int] = field(default=None)
     cmd: Optional[str] = field(default=None)
     sw: Optional[str] = field(default=None)
     hw: Optional[str] = field(default=None)
     ack: Optional[str] = field(default=None)
-    urls: List[ProtocolC2dUrlJson] = field(default_factory=list)  # this cannot be optional. It throws off dataclass
+    urls: List[ProtocolOtaUrlJson] = field(default_factory=list)  # this cannot be optional. It throws off dataclass

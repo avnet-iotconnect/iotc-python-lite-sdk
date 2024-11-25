@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 from avnet.iotconnect.sdk.lite import Client, DeviceConfig, C2dCommand, Callbacks, DeviceConfigError
 from avnet.iotconnect.sdk.lite import __version__ as SDK_VERSION
+from avnet.iotconnect.sdk.sdklib.mqtt import C2dAck, C2dOta
 
 """
 See minimal.py example for a way to configure the device without the JSON file
@@ -35,12 +36,27 @@ class ExampleSensorData:
 
 
 def on_command(msg: C2dCommand):
-    print("Received command", msg.command_name, msg.command_args)
+    print("Received command", msg.command_name, msg.command_args, msg.ack_id)
     if msg.command_name == "set-user-led":
         if len(msg.command_args) == 3:
-            print("Setting User LED to R:%d G:%d B:%d" % (int(msg.command_args[0]), int(msg.command_args[1]), int(msg.command_args[2])))
+            status_message = "Setting User LED to R:%d G:%d B:%d" % (int(msg.command_args[0]), int(msg.command_args[1]), int(msg.command_args[2]))
+            c.send_command_ack(msg, C2dAck.CMD_SUCCESS_WITH_ACK, status_message)
+            print(status_message)
         else:
+            c.send_command_ack(msg, C2dAck.CMD_FAILED, "Expected 3 arguments")
             print("Expected three command arguments, but got", len(msg.command_args))
+    else:
+        print("Command %s not implemented!" % msg.command_name)
+        if msg.ack_id is not None: # it could be a command without "Acknowledgement Required" flag in the device template
+            c.send_command_ack(msg, C2dAck.CMD_FAILED, "Not Implemented")
+
+
+def on_ota(msg: C2dOta):
+    # We just print the URL. The actual handling of the OTA request would be project specific.
+    # See the ota-handling.py for more details.
+    print("Received OTA request. File: %s Version: %s URL: %s" % (msg.urls[0].file_name, msg.version, msg.urls[0].url))
+    # OTA messages always have ack_id, so it is safe to not check for it before sending the ack
+    c.send_ota_ack(msg, C2dAck.OTA_DOWNLOAD_FAILED, "Not implemented")
 
 
 def on_disconnect(reason: str, disconnected_from_server: bool):

@@ -13,7 +13,7 @@ from typing import Optional
 
 from avnet.iotconnect.sdk.lite import Client, DeviceConfig, Callbacks, DeviceConfigError
 from avnet.iotconnect.sdk.lite import __version__ as SDK_VERSION
-from avnet.iotconnect.sdk.lite.c2d import C2dOta
+from avnet.iotconnect.sdk.sdklib.mqtt import C2dOta, C2dAck
 
 """
 In this demo we demonstrate a simple example of how an OTA could be handled.
@@ -50,31 +50,39 @@ def subprocess_run_with_print(args):
 
 def download(msg: C2dOta):
     global dl_thread
-    has_failure = False
+    error_msg = None
+    c.send_ota_ack(msg, C2dAck.OTA_DOWNLOADING)
     for url in msg.urls:
-        print("Downloading OTA file %s from %s" % (msg.urls[0].file_name, msg.urls[0].url))
+        print("Downloading OTA file %s from %s" % (url.file_name, url.url))
         try:
             urllib.request.urlretrieve(url.url, url.file_name)
         except Exception as e:
             print("Encountered download error", e)
-            has_failure = True
+            error_msg = "Download error for %s" % url.file_name
+            break
         try:
             if url.file_name.endswith(".whl"):
-                # force reinstall may not be the greatest idea, but may help with testing
+                # Force install could help with testing and allowing package downgrades
                 subprocess_run_with_print(("python3", "-m", "pip", "install", "--force-reinstall", url.file_name))
             elif url.file_name.endswith(".zip"):
                 subprocess_run_with_print(("unzip", "-oqq", url.file_name))
             elif url.file_name.endswith(".tgz") or url.file_name.endswith(".tar.gz"):
                 subprocess_run_with_print(("tar", "-zxf", url.file_name))
-
+            else:
+                print("ERROR: Unhandled file format for file %s" % url.file_name)
+                error_msg = "Processing error for %s" % url.file_name
+                break
         except subprocess.CalledProcessError:
-            print("ERROR failed to install %s" % url.file_name)
-            has_failure = True
-    if has_failure:
-        print("Encountered a download processing error. Not restarting.")  # In hopes that someone pushes a better update
+            print("ERROR: Failed to install %s" % url.file_name)
+            error_msg = "Install error for %s" % url.file_name
+            break
+    if error_msg is not None:
+        c.send_ota_ack(msg, C2dAck.OTA_FAILED, error_msg)
+        print('Encountered a download processing error "%s". Not restarting.' % error_msg)  # In hopes that someone pushes a better update
     else:
         global need_restart
         print("OTA successful. Will restart the application at next main loop iteration...")
+        c.send_ota_ack(msg, C2dAck.OTA_DOWNLOAD_DONE)
         need_restart = True
     dl_thread = None
 

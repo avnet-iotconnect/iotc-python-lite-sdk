@@ -5,54 +5,22 @@
 import json
 import random
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict
 from datetime import datetime, timezone
 from json import JSONDecodeError
 from ssl import SSLError
-from typing import Union, Callable, Optional, Final
+from typing import Callable, Optional
 
 from paho.mqtt.client import CallbackAPIVersion, MQTTErrorCode, DisconnectFlags, MQTTMessageInfo
 from paho.mqtt.client import Client as PahoClient
 from paho.mqtt.reasoncodes import ReasonCode
 
-from avnet.iotconnect.sdk.sdklib.protocol.c2d import ProtocolC2dMessageJson, ProtocolC2dOtaJson, ProtocolC2dCommandJson
-from avnet.iotconnect.sdk.sdklib.protocol.d2c import ProtocolD2cTelemetryMessageJson, ProtocolD2cTelemetryEntryJson
-from avnet.iotconnect.sdk.sdklib.util import Timing, dict_filter_empty, dataclass_factory_filter_empty, deserialize_dataclass
-from .c2d import C2dOta, C2dMessage, C2dCommand
+from avnet.iotconnect.sdk.sdklib.mqtt import C2dOta, C2dMessage, C2dCommand, C2dAck, TelemetryRecord, TelemetryValueType
+from avnet.iotconnect.sdk.sdklib.protocol.c2d import ProtocolC2dMessageJson, ProtocolOtaMessageJson, ProtocolCommandMessageJson
+from avnet.iotconnect.sdk.sdklib.protocol.d2c import ProtocolTelemetryMessageJson, ProtocolTelemetryEntryJson, ProtocolAckDJson, ProtocolAckMessageJson
+from avnet.iotconnect.sdk.sdklib.util import Timing, dataclass_factory_filter_empty, deserialize_dataclass
 from .config import DeviceConfig
 from .dra import DeviceRestApi
-
-# When type "object" is defined in IoTConnect, it cannot have nested objects inside of it.
-TelemetryValueObjectType = dict[str, Union[None, str, int, float, bool, tuple[float, float]]]
-TelemetryValueType = Union[None, str, int, float, bool, tuple[float, float], TelemetryValueObjectType]
-TelemetryValues = dict[str, TelemetryValueType]
-
-
-@dataclass
-class TelemetryRecord:
-    values: TelemetryValues
-    timestamp: datetime = None
-    unique_id: str = None
-    tag: str = None
-
-    def apply_timestamp(self):
-        """ Timestamps this TelemetryEntry with the current timestamp """
-        self.timestamp = Client.timestamp_now()
-        return self
-
-
-class C2dMessageType:
-    # don't use actual enum because we want to allow "unknown" message types
-    COMMAND: Final[int] = 0
-    OTA: Final[int] = 1
-    MODULE_COMMAND: Final[int]      = 2
-    UNDEFINED: Final[int] = 0xFFFF
-
-    @classmethod
-    def parse(cls, value: Union[int, None]) -> int:
-        if value is None:
-            return C2dMessageType.UNDEFINED
-        return value
 
 
 class Callbacks:
@@ -185,10 +153,10 @@ class Client:
         self.mqtt.tls_set(certfile=config.device_cert_path, keyfile=config.device_pkey_path, ca_certs=config.server_ca_cert_path)
         self.mqtt.username = self.mqtt_config.username
 
-        self.mqtt.on_message = self.on_mqtt_message
-        self.mqtt.on_connect = self.on_mqtt_connect
-        self.mqtt.on_disconnect = self.on_mqtt_disconnect
-        self.mqtt.on_publish = self.on_mqtt_publish
+        self.mqtt.on_message = self._on_mqtt_message
+        self.mqtt.on_connect = self._on_mqtt_connect
+        self.mqtt.on_disconnect = self._on_mqtt_disconnect
+        self.mqtt.on_publish = self._on_mqtt_publish
 
         self.user_callbacks = callbacks or Callbacks()
 
@@ -293,22 +261,21 @@ class Client:
         and tag of respective parent./child ("tg" in JSON)
 
         See https://docs.iotconnect.io/iotconnect/sdk/message-protocol/device-message-2-1/d2c-messages/#Device for more information.
-
         """
 
         if not self.is_connected():
             print('Message NOT sent. Not connected!')
             return None
         else:
-            packet = ProtocolD2cTelemetryMessageJson()
+            packet = ProtocolTelemetryMessageJson()
             for r in records:
-                packet_entry = ProtocolD2cTelemetryEntryJson(
+                packet_entry = ProtocolTelemetryEntryJson(
                     d=r.values,
-                    dt=None if r.timestamp is None else r.timestamp.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                    dt=None if r.timestamp is None else Client._to_iotconnect_time_str(r.timestamp),
                     id=r.unique_id,
                     tg=r.tag
                 )
-                packet.d.append(dict_filter_empty(asdict(packet_entry, dict_factory=dataclass_factory_filter_empty)))
+                packet.d.append(asdict(packet_entry, dict_factory=dataclass_factory_filter_empty))
             iotc_json = json.dumps(asdict(packet), separators=(',', ':'))
 
             ret = self.mqtt.publish(
@@ -316,10 +283,105 @@ class Client:
                 qos=1,
                 payload=iotc_json
             )
-            print(">", iotc_json)
+            if self.settings.verbose:
+                print(">", iotc_json)
             return ret
 
+
+    def send_command_ack(self, original_message: C2dCommand, status: int, message_str = None):
+        """
+        Send Command acknowledgement.
+
+        :param original_message: The original message that was received in the callback.
+        :param status: C2dAck.CMD_FAILED or C2dAck.CMD_SUCCESS_WITH_ACK.
+        :param message_str: (Optional) For example: 'LED color now "blue"', or 'LED color "red" not supported'
+        """
+
+        if original_message.type != C2dMessage.COMMAND:
+            print('Error: Called send_command_ack(), but message is not a command!')
+            return
+        self.send_ack(
+            ack_id=original_message.ack_id,
+            message_type=original_message.type,
+            status=status,
+            message_str=message_str,
+            original_command=original_message.command_name
+        )
+
+    def send_ota_ack(self, original_message: C2dOta, status: int, message_str = None):
+        """
+        Send OTA acknowledgement.
+        See the C2dAck comments for best practices with OTA download ACks.
+
+        :param original_message: The original message that was received in the callback.
+        :param status: For example: C2dAck.OTA_DOWNLOAD_FAILED.
+        :param message_str: (Optional) For example: "Failed to unzip the OTA package".
+        :param message_str: (Optional) For example: "Failed to unzip the OTA package".
+        """
+        if original_message.type != C2dMessage.OTA:
+            print('Error: Called send_ota_ack(), but message is not an OTA request!')
+            return
+        self.send_ack(
+            ack_id=original_message.ack_id,
+            message_type=original_message.type,
+            status=status,
+            message_str=message_str
+        )
+
+    def send_ack(self, ack_id: str, message_type: int, status: int, message_str: str = None, original_command: str = None):
+        """
+        Send Command or OTA ack while having only ACK ID
+
+        :param ack_id: Recorded ack_id from the original message.
+        :param message_type: For example: C2dMessage.COMMAND or C2dMessage.OTA, .
+        :param status: For example: C2dAck.CMD_FAILED or C2dAck.OTA_DOWNLOAD_DONE for command/OTA respectively.
+        :param message_str: (Optional) For example: "Failed to unzip the OTA package", or 'LED color "red" not supported'
+        :param original_command: (Optional) If this argument is passed,
+            this command name will be printed along with any potential error messages.
+
+        While the client should generally use send_ota_ack or send_command_ack, this method can be used in cases
+        where the context of the original received message is not available (after OTA restart for example)
+        """
+        if not self.is_connected():
+            print('Message NOT sent. Not connected!')
+        elif ack_id is None or len(ack_id) == 0:
+            if original_command is not None:
+                print('Error: Message ACK ID missing. Ensure to set "Acknowledgement Required" in the template for command %s!' % original_command)
+            else:
+                print('Error: Message ACK ID missing. Ensure to set "Acknowledgement Required" in the template the command!' % original_command)
+            return
+        elif message_type not in (C2dMessage.COMMAND, C2dMessage.OTA):
+            print('Warning: Message type %d does not appear to be a valid message type!' % message_type)  # let it pass, just in case we can still somehow send different kind of ack
+        elif message_type == C2dMessage.COMMAND and not C2dAck.is_valid_cmd_status(status):
+            print('Warning: Status %d does not appear to be a valid command ACK status!' % status) # let it pass, just in case there is a new status
+        elif message_type == C2dMessage.OTA and not C2dAck.is_valid_ota_status(status):
+            print('Warning: Status %d does not appear to be a valid OTA ACK status!' % status) # let it pass, just in case there is a new status
+
+        packet = ProtocolAckMessageJson(
+            d=ProtocolAckDJson(
+                ack=ack_id,
+                type=message_type,
+                st=status,
+                msg=message_str
+            )
+        )
+        iotc_json = json.dumps(asdict(packet, dict_factory=dataclass_factory_filter_empty), separators=(',', ':'))
+        ret = self.mqtt.publish(
+            topic=self.mqtt_config.topics.ack,
+            qos=1,
+            payload=iotc_json
+        )
+        if self.settings.verbose:
+            print(">", iotc_json)
+        return ret
+
+    @classmethod
+    def _to_iotconnect_time_str(cls, ts: datetime) -> str:
+        return ts.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
     def _process_c2d_message(self, topic: str, payload: str) -> bool:
+        # topic is ignored for now as we only subscribe to one
+        # we ought to change this once we start supporting Properties (Twin/Shadow)
         try:
             # use the simplest form of ProtocolC2dMessageJson when deserializing first and
             # convert message to appropriate json later
@@ -327,58 +389,74 @@ class Client:
             message_packet = deserialize_dataclass(ProtocolC2dMessageJson, message_dict)
             message = C2dMessage(message_packet)
 
+            if not message.validate():
+                print("C2D Message is invalid: %s" % payload)
+                return False
+
             # if the user wants to handle this message type, stop processing further
             generic_cb = self.user_callbacks.generic_message_callbacks.get(message.type)
             if generic_cb is not None:
                 generic_cb(message, message_dict)
                 return True
 
-            if message.type == C2dMessageType.COMMAND:
-                msg = C2dCommand(deserialize_dataclass(ProtocolC2dCommandJson, message_dict))
+            if message.type == C2dMessage.COMMAND:
+                msg = C2dCommand(deserialize_dataclass(ProtocolCommandMessageJson, message_dict))
+                if not msg.validate():
+                    print("C2D Command is invalid: %s" % payload)
+                    return False
 #               TODO: Deal with runtime qualification
 #               if msg.command_name == 'aws-qualification-start':
 #                    self._aws_qualification_start(msg.command_args)
 #                elif self.user_callbacks.command_cb is not None:
                 if self.user_callbacks.command_cb is not None:
                     self.user_callbacks.command_cb(msg)
-            elif message.type == C2dMessageType.OTA:
-                msg = C2dOta(deserialize_dataclass(ProtocolC2dOtaJson, message_dict))
+                else:
+                    if self.settings.verbose:
+                        print("WARN: Unhandled command %s received!" % msg.command_name)
+            elif message.type == C2dMessage.OTA:
+                msg = C2dOta(deserialize_dataclass(ProtocolOtaMessageJson, message_dict))
+                if not msg.validate():
+                    print("C2D Command is invalid: %s" % payload)
+                    return False
                 if len(msg.urls) > 0:
                     if self.user_callbacks.ota_cb is not None:
                         self.user_callbacks.ota_cb(msg)
+                    else:
+                        if self.settings.verbose:
+                            print("WARN: Unhandled OTA request received!")
                 else:
                     print("ERROR: Got OTA, but URLs list is empty!")
             elif message.is_fatal:
-                print("Received C2D message %s from backend. Device should stop operation." % message.description)
+                print("Received C2D message %s from backend. Device should stop operation." % message.type_description)
             elif message.needs_refresh:
-                print("Received C2D message %s from backend. Device should re-initialize the application." % message.description)
+                print("Received C2D message %s from backend. Device should re-initialize the application." % message.type_description)
             elif message.heartbeat_operation is not None:
                 operation_str = "start" if message.heartbeat_operation == True else "stop"
-                print("Received C2D message %s from backend. Device should %s heartbeat messages." % (message.description, operation_str))
+                print("Received C2D message %s from backend. Device should %s heartbeat messages." % (message.type_description, operation_str))
             else:
                 print("C2D Message parsing for message type %d is not supported by this client. Message was: %s" % (message_packet.ct, payload))
 
-        except JSONDecodeError as jde:
+        except JSONDecodeError:
             print('Error: Incoming message not parseable: "%s"' % payload)
             return False
 
-    def on_mqtt_connect(self, mqttc: PahoClient, obj, flags, reason_code, properties):
+    def _on_mqtt_connect(self, mqttc: PahoClient, obj, flags, reason_code, properties):
         if self.settings.verbose:
             print("Connected. Reason Code: " + str(reason_code))
 
-    def on_mqtt_disconnect(self, mqttc: PahoClient, obj, flags: DisconnectFlags, reason_code: ReasonCode, properties):
+    def _on_mqtt_disconnect(self, mqttc: PahoClient, obj, flags: DisconnectFlags, reason_code: ReasonCode, properties):
         if self.user_callbacks.disconnected_cb is not None:
             # cannot send raw reason code from paho. We could technically change the backend.
             self.user_callbacks.disconnected_cb(str(reason_code), flags.is_disconnect_packet_from_server)
         else:
             print("Disconnected. Reason: %s. Flags: %s" % (str(reason_code), str(flags)))
 
-    def on_mqtt_message(self, mqttc: PahoClient, obj, msg):
+    def _on_mqtt_message(self, mqttc: PahoClient, obj, msg):
         if self.settings.verbose:
             print(msg.topic + " " + str(msg.qos) + " " + str(msg.payload))
         self._process_c2d_message(msg.topic, msg.payload)
 
-    def on_mqtt_publish(self, mqttc: PahoClient, obj, mid, reason_code, properties):
+    def _on_mqtt_publish(self, mqttc: PahoClient, obj, mid, reason_code, properties):
         # print("mid: " + str(mid))
         pass
 
