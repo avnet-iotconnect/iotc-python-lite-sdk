@@ -16,7 +16,7 @@ def on_command(msg: C2dCommand):
     if msg.command_name == "set-user-led":
         if len(msg.command_args) == 3:
             status_message = "Setting User LED to R:%d G:%d B:%d" % (int(msg.command_args[0]), int(msg.command_args[1]), int(msg.command_args[2]))
-            c.send_command_ack(msg.type, C2dAck.CMD_SUCCESS_WITH_ACK, status_message)
+            c.send_command_ack(msg, C2dAck.CMD_SUCCESS_WITH_ACK, status_message)
             print(status_message)
         else:
             c.send_command_ack(msg, C2dAck.CMD_FAILED, "Expected 3 arguments")
