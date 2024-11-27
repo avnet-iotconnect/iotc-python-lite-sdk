@@ -45,12 +45,12 @@ An IoTConnect *Device Template* will need to be created or imported. This define
 
 Download and install the Python Lite SDK:
 ```shell
-curl -sOJ 'https://github.com/avnet-iotconnect/iotc-python-lite-sdk/releases/download/v1.0.0/iotconnect_sdk_lite-1.0.0-py3-none-any.whl'
+curl -sOJ 'https://saleshosted.z13.web.core.windows.net/sdk/python/iotconnect_sdk_lite-1.0.0-py3-none-any.whl'
 python3 -m pip install iotconnect_sdk_lite-1.0.0-py3-none-any.whl
 ```
 Or use wget if your system does not have curl:
 ```shell
-wget -qN 'https://github.com/avnet-iotconnect/iotc-python-lite-sdk/releases/download/v1.0.0/iotconnect_sdk_lite-1.0.0-py3-none-any.whl'
+wget -qN 'https://saleshosted.z13.web.core.windows.net/sdk/python/iotconnect_sdk_lite-1.0.0-py3-none-any.whl'
 python3 -m pip install iotconnect_sdk_lite-1.0.0-py3-none-any.whl
 ```
 
