@@ -43,26 +43,27 @@ An IoTConnect *Device Template* will need to be created or imported. This define
 
 ## Device Setup
 
-Download and install the Python Lite SDK:
-```shell
-curl -sOJ 'https://saleshosted.z13.web.core.windows.net/sdk/python/iotconnect_sdk_lite-1.0.0-py3-none-any.whl'
-python3 -m pip install iotconnect_sdk_lite-1.0.0-py3-none-any.whl
-```
-Or use wget if your system does not have curl:
-```shell
-wget -qN 'https://saleshosted.z13.web.core.windows.net/sdk/python/iotconnect_sdk_lite-1.0.0-py3-none-any.whl'
-python3 -m pip install iotconnect_sdk_lite-1.0.0-py3-none-any.whl
-```
+This section assumes the latest version of the SDK and quickstart,
+so modify the install and curl/wget lines accordingly if access to older versions is needed.
 
+Install the Python Lite SDK with:
+
+```shell
+python3 -m pip install iotconnect-sdk-lite
+```
 
 Execute the quickstart setup with the following line:
+
 ```shell
 curl -sOJ 'https://raw.githubusercontent.com/avnet-iotconnect/iotc-python-lite-sdk/refs/heads/main/scripts/quickstart.sh' && bash ./quickstart.sh
 ``` 
+
 Or with wget:
+
 ```shell
 wget -qN 'https://raw.githubusercontent.com/avnet-iotconnect/iotc-python-lite-sdk/refs/heads/main/scripts/quickstart.sh' && bash ./quickstart.sh
 ```
+
 > **Note:** If on Windows, after the script completes, 
 > you may need to run python in unbuffered mode instead with "python3 -u quickstart.py"
 
@@ -77,8 +78,8 @@ waiting to connect...
 Connected. Reason Code: Success
 MQTT connected
 Connected in 572ms
-> {"d":[{"d":{"sdk_version":"1.0.0","random":83}}]}
-> {"d":[{"d":{"sdk_version":"1.0.0","random":13}}]}
+> {"d":[{"d":{"sdk_version":"1.0.1","version":"1.0.0","random":83}}]}
+> {"d":[{"d":{"sdk_version":"1.0.1","version":"1.0.0","random":13}}]}
 ...
 ```
 

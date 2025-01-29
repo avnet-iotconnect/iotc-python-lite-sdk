@@ -11,6 +11,13 @@
             "aggregateTypes": []
         },
         {
+            "name": "version",
+            "type": "STRING",
+            "description": "Application version",
+            "unit": "",
+            "aggregateTypes": []
+        },
+        {
             "name": "random",
             "type": "DECIMAL",
             "description": "A generated random number",

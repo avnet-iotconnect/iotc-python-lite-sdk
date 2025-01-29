@@ -11,6 +11,9 @@
 /*.gz
 /*.whl
 
+# when massaging for a release with absolute links
+/README.*.md
+
 # This will be generated when making an editable installs
 src/iotconnect_sdk_lite.egg-info/
 
