@@ -49,7 +49,6 @@ content = re.sub(
 )
 
 heading="""
-> [!NOTE]
 > This document is reformatted to better viewing as a standalone document.
 > We recommended visit this [GitHub v{} link]({}) for best experience.
 
