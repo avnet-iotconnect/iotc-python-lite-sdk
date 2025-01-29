@@ -44,8 +44,7 @@ with readme_path.open("r", encoding="utf-8") as file:
 
 content = re.sub(
     r'\[([^\]]+)\]\((?!http)([^)]+)\)',
-    # lambda match: f"[{match.group(1)}]({repo_url}/blob/{__version__}/{match.group(2)})",
-    lambda match: f"[{match.group(1)}]({repo_url}/{match.group(2)})",
+    lambda match: f"[{match.group(1)}]({repo_url}/blob/v{__version__}/{match.group(2)})",
     content,
 )
 

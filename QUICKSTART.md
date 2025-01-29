@@ -78,8 +78,8 @@ waiting to connect...
 Connected. Reason Code: Success
 MQTT connected
 Connected in 572ms
-> {"d":[{"d":{"sdk_version":"1.0.1","version":"1.0.0","random":83}}]}
-> {"d":[{"d":{"sdk_version":"1.0.1","version":"1.0.0","random":13}}]}
+> {"d":[{"d":{"sdk_version":"1.0.2","version":"1.0.0","random":83}}]}
+> {"d":[{"d":{"sdk_version":"1.0.2","version":"1.0.0","random":13}}]}
 ...
 ```
 
