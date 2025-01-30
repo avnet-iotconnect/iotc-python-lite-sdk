@@ -50,7 +50,7 @@ content = re.sub(
 
 heading="""
 > This document is reformatted to better viewing as a standalone document.
-> We recommended visit this [GitHub v{} link]({}) for best experience.
+> We recommend visiting this [GitHub v{} link]({}) for best experience.
 
 """.format(__version__, f"$REPO_URL/blob/v{__version__}/")
 
@@ -61,12 +61,13 @@ EOF
 
 echo "README prepared at $README_PATH_WORK"
 
-# Step 2: Build the package using the temporary README
+# Build the package using the temporary README
 cp "${README_PATH_WORK}" "${README_PATH}"
+python3 -m pip install build
 python3 -m build
 
-# Step 3: Cleanup
-# Restore README from backup.
+# Cleanup
+# Restore README from backup
 cp "${README_PATH_BKP}" "${README_PATH}"
 
 popd >/dev/null
