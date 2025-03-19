@@ -72,7 +72,6 @@ def on_ota(msg: C2dOta):
                 # If ota-install.sh is found in the current directory, give it executable permissions and execute it
                 if os.path.isfile(file_path):
                     try:
-                        os.chmod(file_path, 0o755)
                         subprocess.run(['bash', file_path], check=True)
                         print(f"Successfully executed {filename}")
 
