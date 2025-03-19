@@ -66,7 +66,7 @@ def on_ota(msg: C2dOta):
         try:
             if url.file_name.endswith(".tar.gz"):
                 subprocess.run(("tar", "-xzvf", url.file_name, "--overwrite"), check=True)
-                filename = "ota-install.sh"
+                filename = "install.sh"
                 current_directory = os.getcwd()
                 file_path = os.path.join(current_directory, filename)
                 # If ota-install.sh is found in the current directory, give it executable permissions and execute it
