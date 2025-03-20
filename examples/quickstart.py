@@ -114,6 +114,7 @@ try:
     c = Client(
         config=device_config,
         callbacks=Callbacks(
+            ota_cb = on_ota,
             command_cb=on_command,
             disconnected_cb=on_disconnect
         )
