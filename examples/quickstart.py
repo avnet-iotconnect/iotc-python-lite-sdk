@@ -6,6 +6,10 @@ import random
 import sys
 import time
 from dataclasses import dataclass
+import subprocess
+import os
+import urllib.request
+
 
 from avnet.iotconnect.sdk.lite import Client, DeviceConfig, C2dCommand, Callbacks, DeviceConfigError
 from avnet.iotconnect.sdk.lite import __version__ as SDK_VERSION
