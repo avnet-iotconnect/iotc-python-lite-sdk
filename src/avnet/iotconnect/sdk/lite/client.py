@@ -19,8 +19,9 @@ from avnet.iotconnect.sdk.sdklib.mqtt import C2dOta, C2dMessage, C2dCommand, C2d
 from avnet.iotconnect.sdk.sdklib.protocol.c2d import ProtocolC2dMessageJson, ProtocolOtaMessageJson, ProtocolCommandMessageJson
 from avnet.iotconnect.sdk.sdklib.protocol.d2c import ProtocolTelemetryMessageJson, ProtocolTelemetryEntryJson, ProtocolAckDJson, ProtocolAckMessageJson
 from avnet.iotconnect.sdk.sdklib.util import Timing, dataclass_factory_filter_empty, deserialize_dataclass
+from avnet.iotconnect.sdk.sdklib.dra import DeviceRestApi
+
 from .config import DeviceConfig
-from .dra import DeviceRestApi
 
 
 class Callbacks:
@@ -138,11 +139,10 @@ class Client:
             callbacks: Callbacks = None,
             settings: ClientSettings = None
     ):
-        self.config = config
         self.user_callbacks = callbacks or Callbacks()
         self.settings = settings or ClientSettings()
 
-        self.mqtt_config = DeviceRestApi(config).get_identity_data()  # can raise DeviceConfigError
+        self.mqtt_config = DeviceRestApi(config.to_properties(), trace_request=True).get_identity_data()  # can raise DeviceConfigError
 
         self.mqtt = PahoClient(
             callback_api_version=CallbackAPIVersion.VERSION2,

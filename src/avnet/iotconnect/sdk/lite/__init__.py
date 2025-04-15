@@ -1,6 +1,6 @@
 __version__ = '1.0.3'
 
-from .error import DeviceConfigError
+from avnet.iotconnect.sdk.sdklib.error import DeviceConfigError
 from .config import DeviceConfig
 from .client import Client, ClientSettings, Callbacks
 

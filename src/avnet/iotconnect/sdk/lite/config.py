@@ -9,9 +9,10 @@ from dataclasses import dataclass, field
 from os import access, R_OK
 from typing import Optional
 
-from .error import DeviceConfigError
+from avnet.iotconnect.sdk.sdklib.config import DeviceProperties
+from avnet.iotconnect.sdk.sdklib.error import DeviceConfigError
 from avnet.iotconnect.sdk.sdklib.protocol.files import ProtocolDeviceConfigJson
-from ..sdklib.util import deserialize_dataclass
+from avnet.iotconnect.sdk.sdklib.util import deserialize_dataclass
 
 
 @dataclass
@@ -65,8 +66,9 @@ class DeviceConfig:
     or server_ca_cert_path="/etc/ssl/certs/Amazon_Root_CA_1.pem" for AWS    
     """
 
+
     def __post_init__(self):
-        """ Validate dataclass arguments and try to infoer some, if they are missing """
+        """ Validate dataclass arguments and try to infer some, if they are missing """
         if self.platform not in ("aws", "az"):
             raise DeviceConfigError('DeviceConfig: Platform must be "aws" or "az"')
         if self.discovery_url is None:
@@ -82,6 +84,15 @@ class DeviceConfig:
         DeviceConfig._validate_file(self.device_pkey_path, r"^-----BEGIN.*PRIVATE KEY-----$")
         if self.server_ca_cert_path is not None:
             DeviceConfig._validate_file(self.server_ca_cert_path, r"^-----BEGIN CERTIFICATE-----$")
+    def to_properties(self) -> DeviceProperties:
+        properties = DeviceProperties(
+            duid=self.duid,
+            cpid=self.cpid,
+            env=self.env,
+            platform=self.platform
+        )
+        properties.validate()
+        return properties
 
     @classmethod
     def from_iotc_device_config_json(
