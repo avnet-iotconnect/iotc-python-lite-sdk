@@ -1,4 +1,4 @@
-__version__ = '1.0.3'
+__version__ = '1.1.0'
 
 from avnet.iotconnect.sdk.sdklib.error import DeviceConfigError
 from .config import DeviceConfig

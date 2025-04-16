@@ -11,15 +11,14 @@ from json import JSONDecodeError
 from ssl import SSLError
 from typing import Callable, Optional
 
+from avnet.iotconnect.sdk.sdklib.dra import DeviceRestApi
+from avnet.iotconnect.sdk.sdklib.mqtt import C2dOta, C2dMessage, C2dCommand, C2dAck, TelemetryRecord, TelemetryValueType, format_telemetry_records
+from avnet.iotconnect.sdk.sdklib.protocol.c2d import ProtocolC2dMessageJson, ProtocolOtaMessageJson, ProtocolCommandMessageJson
+from avnet.iotconnect.sdk.sdklib.protocol.d2c import ProtocolAckDJson, ProtocolAckMessageJson
+from avnet.iotconnect.sdk.sdklib.util import Timing, dataclass_factory_filter_empty, deserialize_dataclass
 from paho.mqtt.client import CallbackAPIVersion, MQTTErrorCode, DisconnectFlags, MQTTMessageInfo
 from paho.mqtt.client import Client as PahoClient
 from paho.mqtt.reasoncodes import ReasonCode
-
-from avnet.iotconnect.sdk.sdklib.mqtt import C2dOta, C2dMessage, C2dCommand, C2dAck, TelemetryRecord, TelemetryValueType
-from avnet.iotconnect.sdk.sdklib.protocol.c2d import ProtocolC2dMessageJson, ProtocolOtaMessageJson, ProtocolCommandMessageJson
-from avnet.iotconnect.sdk.sdklib.protocol.d2c import ProtocolTelemetryMessageJson, ProtocolTelemetryEntryJson, ProtocolAckDJson, ProtocolAckMessageJson
-from avnet.iotconnect.sdk.sdklib.util import Timing, dataclass_factory_filter_empty, deserialize_dataclass
-from avnet.iotconnect.sdk.sdklib.dra import DeviceRestApi
 
 from .config import DeviceConfig
 
@@ -267,24 +266,14 @@ class Client:
             print('Message NOT sent. Not connected!')
             return None
         else:
-            packet = ProtocolTelemetryMessageJson()
-            for r in records:
-                packet_entry = ProtocolTelemetryEntryJson(
-                    d=r.values,
-                    dt=None if r.timestamp is None else Client._to_iotconnect_time_str(r.timestamp),
-                    id=r.unique_id,
-                    tg=r.tag
-                )
-                packet.d.append(asdict(packet_entry, dict_factory=dataclass_factory_filter_empty))
-            iotc_json = json.dumps(asdict(packet), separators=(',', ':'))
-
+            packet = format_telemetry_records(records)
             ret = self.mqtt.publish(
                 topic=self.mqtt_config.topics.rpt,
                 qos=1,
-                payload=iotc_json
+                payload=packet
             )
             if self.settings.verbose:
-                print(">", iotc_json)
+                print(">", packet)
             return ret
 
 
@@ -374,10 +363,6 @@ class Client:
         if self.settings.verbose:
             print(">", iotc_json)
         return ret
-
-    @classmethod
-    def _to_iotconnect_time_str(cls, ts: datetime) -> str:
-        return ts.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     def _process_c2d_message(self, topic: str, payload: str) -> bool:
         # topic is ignored for now as we only subscribe to one
