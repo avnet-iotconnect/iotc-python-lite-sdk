@@ -9,9 +9,10 @@ from dataclasses import dataclass, field
 from os import access, R_OK
 from typing import Optional
 
-from .error import DeviceConfigError
+from avnet.iotconnect.sdk.sdklib.config import DeviceProperties
+from avnet.iotconnect.sdk.sdklib.error import DeviceConfigError
 from avnet.iotconnect.sdk.sdklib.protocol.files import ProtocolDeviceConfigJson
-from ..sdklib.util import deserialize_dataclass
+from avnet.iotconnect.sdk.sdklib.util import deserialize_dataclass
 
 
 @dataclass
@@ -53,7 +54,7 @@ class DeviceConfig:
     """Path to the device private key file"""
 
     discovery_url: Optional[str] = field(default=None)
-    """Platform - either "aws" or "az" (Azure)"""
+    """Ignored. Only for backward compatibility"""
 
     server_ca_cert_path: Optional[str] = field(default=None)  # if not specified use system CA certificates in /etc/ssl or whatever it would be in windows
     """
@@ -65,23 +66,25 @@ class DeviceConfig:
     or server_ca_cert_path="/etc/ssl/certs/Amazon_Root_CA_1.pem" for AWS    
     """
 
+
     def __post_init__(self):
-        """ Validate dataclass arguments and try to infoer some, if they are missing """
+        """ Validate dataclass arguments and try to infer some, if they are missing """
         if self.platform not in ("aws", "az"):
             raise DeviceConfigError('DeviceConfig: Platform must be "aws" or "az"')
-        if self.discovery_url is None:
-            if self.platform == "az":
-                self.discovery_url = "https://discovery.iotconnect.io"
-            elif self.platform == "aws":
-                if self.env == "poc":
-                    self.discovery_url = "https://awsdiscovery.iotconnect.io"
-                else:
-                    # best guess...
-                    self.discovery_url = "https://discoveryconsole.iotconnect.io"
+        # ignore discovery URL. We will use global config via DeviceProperties
         DeviceConfig._validate_file(self.device_cert_path, r"^-----BEGIN CERTIFICATE-----$")
         DeviceConfig._validate_file(self.device_pkey_path, r"^-----BEGIN.*PRIVATE KEY-----$")
         if self.server_ca_cert_path is not None:
             DeviceConfig._validate_file(self.server_ca_cert_path, r"^-----BEGIN CERTIFICATE-----$")
+    def to_properties(self) -> DeviceProperties:
+        properties = DeviceProperties(
+            duid=self.duid,
+            cpid=self.cpid,
+            env=self.env,
+            platform=self.platform
+        )
+        properties.validate()
+        return properties
 
     @classmethod
     def from_iotc_device_config_json(
@@ -114,7 +117,7 @@ class DeviceConfig:
             device_cert_path: str,
             device_pkey_path: str,
             server_ca_cert_path: Optional[str] = None) -> 'DeviceConfig':
-        """ Return a class instance based on a downloaded iotcDeviceConfig.json fom device's Info panel in IoTConnect"""
+        """ Return a class instance based on a downloaded iotcDeviceConfig.json fom device's Info panel in /IOTCONNECT"""
         file_content = cls._validate_file(device_config_json_path)
         file_dict = json.loads(file_content)
         pdcj = deserialize_dataclass(ProtocolDeviceConfigJson, file_dict)

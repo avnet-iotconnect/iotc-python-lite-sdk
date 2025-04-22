@@ -1,13 +1,13 @@
 # Introduction
-This project is the IoTConnect Python Lite Client (SDK)
+This project is the /IOTCONNECT Python Lite Client (SDK)
 that aims for a modern, intuitive and robust interface to connect your
 Linux, Windows or MacOS devices to the Avnet IoTConnect platform.
 
-The project supports IoTConnect Device Protocol 2.1 devices. 
+The project supports /IOTCONNECT Device Protocol 2.1 devices. 
 The project requires Python 3.9 or newer and provides
-a set of features for most common IoTConnect use cases.
+a set of features for most common /IOTCONNECT use cases.
 
-If you need support for older Pyton, Protocol 1.0, Properties (Shadow/Twin)
+If you need support for older Pyton, both Protocol 1.0 and 2.1, Properties (Shadow/Twin)
 Offline or HTTP Client along with other features like Gateway/Child support
 you should check out the standard
 [Iotconnect Python SDK](https://github.com/avnet-iotconnect/iotc-python-sdk) repository.
@@ -22,7 +22,7 @@ The quickest way to get started with the project is to follow the [QUICKSTART.md
 
 # Using the Client
 
-Using this client to communicate to IoTConnect involves the following steps:
+Using this client to communicate to /IOTCONNECT involves the following steps:
 - Get familiar with the client API by examining documentation at [client.py](src/avnet/iotconnect/sdk/lite/client.py)
 - Initialize the client with either:
   - iotcDeviceConfig.json (downloaded from the device *Info* panel) - see the [basic-example](examples/basic-example.py)

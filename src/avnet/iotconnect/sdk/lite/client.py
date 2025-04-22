@@ -2,42 +2,24 @@
 # Copyright (C) 2024 Avnet
 # Authors: Nikola Markovic <nikola.markovic@avnet.com> et al.
 
-import json
 import random
 import time
-from dataclasses import asdict
 from datetime import datetime, timezone
-from json import JSONDecodeError
 from ssl import SSLError
 from typing import Callable, Optional
 
+from avnet.iotconnect.sdk.sdklib.dra import DeviceRestApi
+from avnet.iotconnect.sdk.sdklib.error import C2DDecodeError
+from avnet.iotconnect.sdk.sdklib.mqtt import C2dOta, C2dMessage, C2dCommand, C2dAck, TelemetryRecord, TelemetryValueType, encode_telemetry_records, encode_c2d_ack, decode_c2d_message
+from avnet.iotconnect.sdk.sdklib.util import Timing
 from paho.mqtt.client import CallbackAPIVersion, MQTTErrorCode, DisconnectFlags, MQTTMessageInfo
 from paho.mqtt.client import Client as PahoClient
 from paho.mqtt.reasoncodes import ReasonCode
 
-from avnet.iotconnect.sdk.sdklib.mqtt import C2dOta, C2dMessage, C2dCommand, C2dAck, TelemetryRecord, TelemetryValueType
-from avnet.iotconnect.sdk.sdklib.protocol.c2d import ProtocolC2dMessageJson, ProtocolOtaMessageJson, ProtocolCommandMessageJson
-from avnet.iotconnect.sdk.sdklib.protocol.d2c import ProtocolTelemetryMessageJson, ProtocolTelemetryEntryJson, ProtocolAckDJson, ProtocolAckMessageJson
-from avnet.iotconnect.sdk.sdklib.util import Timing, dataclass_factory_filter_empty, deserialize_dataclass
 from .config import DeviceConfig
-from .dra import DeviceRestApi
 
 
 class Callbacks:
-    """
-    Specify callbacks for C2D command, OTA (not implemented yet) or MQTT disconnection.
-
-    :param command_cb: Callback function with first parameter being C2dCommand object.
-        Use this callback to process commands sent by the back end.
-
-    :param ota_cb: Callback function with first parameter being C2dOta object.
-        Use this callback to process OTA updates sent by the back end.
-
-    :param disconnected_cb: Callback function with first parameter being string with reason for disconnect
-        and second a boolean indicating whether a disconnect request was received from the server.
-        Use this callback to asynchronously react to the back end disconnection event rather than polling Client.is_connected.
-    """
-
     def __init__(
             self,
             command_cb: Optional[Callable[[C2dCommand], None]] = None,
@@ -45,6 +27,22 @@ class Callbacks:
             disconnected_cb: Optional[Callable[[str, bool], None]] = None,
             generic_message_callbacks: dict [int, Callable[[C2dMessage, dict], None]]= None
     ):
+        """
+        Specify callbacks for C2D command, OTA (not implemented yet) or MQTT disconnection.
+
+        :param command_cb: Callback function with first parameter being C2dCommand object.
+            Use this callback to process commands sent by the back end.
+
+        :param ota_cb: Callback function with first parameter being C2dOta object.
+            Use this callback to process OTA updates sent by the back end.
+
+        :param disconnected_cb: Callback function with first parameter being string with reason for disconnect
+            and second a boolean indicating whether a disconnect request was received from the server.
+            Use this callback to asynchronously react to the back end disconnection event rather than polling Client.is_connected.
+
+        :param generic_message_callbacks: A dictionary of callbacks indexed by the message type.
+        """
+
         self.disconnected_cb = disconnected_cb
         self.command_cb = command_cb
         self.ota_cb = ota_cb
@@ -61,6 +59,10 @@ class ClientSettings:
             connect_tries: int = 100,
             connect_backoff_max_secs: int = 15
     ):
+        if verbose:
+            from . import __version__ as SDK_VERSION
+            from avnet.iotconnect.sdk.sdklib import __version__ as LIB_VERSION
+            print(f"/IOTCONNENCT Lite Client started with version {SDK_VERSION} and Lib version {LIB_VERSION}")
         self.verbose = verbose
         self.connect_timeout_secs = connect_timeout_secs
         self.connect_tries = connect_tries
@@ -73,13 +75,13 @@ class ClientSettings:
 
 class Client:
     """
-    This is an Avnet IoTConnect MQTT client that provides an easy way for the user to
-    connect to IoTConnect, send and receive data.
+    This is an Avnet /IOTCONNECT MQTT client that provides an easy way for the user to
+    connect to /IOTCONNECT, send and receive data.
 
     :param config: Required device configuration. See the examples or DeviceConfig class description for more details.
     :param callbacks: Optional callbacks that can be provided for the following events:
-        - IoTConnect C2D (Cloud To Device) commands that you can send to your device using the IoTConnect
-        - IoTConnect OTA update events.
+        - /IOTCONNECT C2D (Cloud To Device) commands that you can send to your device using the /IOTCONNECT
+        - /IOTCONNECT OTA update events.
         - Device MQTT disconnection.
     :param settings: Tune the client behavior by providing your preferences regarding connection timeouts and logging.
 
@@ -94,8 +96,8 @@ class Client:
 
             device_config = DeviceConfig(
                 platform="aws",                             # The IoTconnect IoT platform - Either "aws" for AWS IoTCore or "az" for Azure IoTHub
-                env="your-environment",                     # Your account environment. You can locate this in you IoTConnect web UI at Settings -> Key Value
-                cpid="ABCDEFG123456",                       # Your account CPID (Company ID). You can locate this in you IoTConnect web UI at Settings -> Key Value
+                env="your-environment",                     # Your account environment. You can locate this in you /IOTCONNECT web UI at Settings -> Key Value
+                cpid="ABCDEFG123456",                       # Your account CPID (Company ID). You can locate this in you /IOTCONNECT web UI at Settings -> Key Value
                 duid="my-device",                           # Your device unique ID
                 device_cert_path="path/to/device-cert.pem", # Path to the device certificate file
                 device_pkey_path="path/to/device-pkey.pem"  # Path to the device private key file
@@ -138,11 +140,10 @@ class Client:
             callbacks: Callbacks = None,
             settings: ClientSettings = None
     ):
-        self.config = config
         self.user_callbacks = callbacks or Callbacks()
         self.settings = settings or ClientSettings()
 
-        self.mqtt_config = DeviceRestApi(config).get_identity_data()  # can raise DeviceConfigError
+        self.mqtt_config = DeviceRestApi(config.to_properties(), verbose=self.settings.verbose).get_identity_data()  # can raise DeviceConfigError
 
         self.mqtt = PahoClient(
             callback_api_version=CallbackAPIVersion.VERSION2,
@@ -267,24 +268,14 @@ class Client:
             print('Message NOT sent. Not connected!')
             return None
         else:
-            packet = ProtocolTelemetryMessageJson()
-            for r in records:
-                packet_entry = ProtocolTelemetryEntryJson(
-                    d=r.values,
-                    dt=None if r.timestamp is None else Client._to_iotconnect_time_str(r.timestamp),
-                    id=r.unique_id,
-                    tg=r.tag
-                )
-                packet.d.append(asdict(packet_entry, dict_factory=dataclass_factory_filter_empty))
-            iotc_json = json.dumps(asdict(packet), separators=(',', ':'))
-
+            packet = encode_telemetry_records(records)
             ret = self.mqtt.publish(
                 topic=self.mqtt_config.topics.rpt,
                 qos=1,
-                payload=iotc_json
+                payload=packet
             )
             if self.settings.verbose:
-                print(">", iotc_json)
+                print(">", packet)
             return ret
 
 
@@ -357,27 +348,15 @@ class Client:
         elif message_type == C2dMessage.OTA and not C2dAck.is_valid_ota_status(status):
             print('Warning: Status %d does not appear to be a valid OTA ACK status!' % status) # let it pass, just in case there is a new status
 
-        packet = ProtocolAckMessageJson(
-            d=ProtocolAckDJson(
-                ack=ack_id,
-                type=message_type,
-                st=status,
-                msg=message_str
-            )
-        )
-        iotc_json = json.dumps(asdict(packet, dict_factory=dataclass_factory_filter_empty), separators=(',', ':'))
+        packet = encode_c2d_ack(ack_id, message_type, status, message_str)
         ret = self.mqtt.publish(
             topic=self.mqtt_config.topics.ack,
             qos=1,
-            payload=iotc_json
+            payload=packet
         )
         if self.settings.verbose:
-            print(">", iotc_json)
+            print(">", packet)
         return ret
-
-    @classmethod
-    def _to_iotconnect_time_str(cls, ts: datetime) -> str:
-        return ts.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     def _process_c2d_message(self, topic: str, payload: str) -> bool:
         # topic is ignored for now as we only subscribe to one
@@ -385,59 +364,44 @@ class Client:
         try:
             # use the simplest form of ProtocolC2dMessageJson when deserializing first and
             # convert message to appropriate json later
-            message_dict = json.loads(payload)
-            message_packet = deserialize_dataclass(ProtocolC2dMessageJson, message_dict)
-            message = C2dMessage(message_packet)
 
-            if not message.validate():
-                print("C2D Message is invalid: %s" % payload)
-                return False
-
+            decoding_result = decode_c2d_message(payload)
+            generic_message = decoding_result.generic_message
             # if the user wants to handle this message type, stop processing further
-            generic_cb = self.user_callbacks.generic_message_callbacks.get(message.type)
+            generic_cb = self.user_callbacks.generic_message_callbacks.get(generic_message.type)
             if generic_cb is not None:
-                generic_cb(message, message_dict)
+                generic_cb(generic_message, decoding_result.raw_message)
                 return True
 
-            if message.type == C2dMessage.COMMAND:
-                msg = C2dCommand(deserialize_dataclass(ProtocolCommandMessageJson, message_dict))
-                if not msg.validate():
-                    print("C2D Command is invalid: %s" % payload)
-                    return False
+            if decoding_result.command is not None:
 #               TODO: Deal with runtime qualification
 #               if msg.command_name == 'aws-qualification-start':
 #                    self._aws_qualification_start(msg.command_args)
 #                elif self.user_callbacks.command_cb is not None:
                 if self.user_callbacks.command_cb is not None:
-                    self.user_callbacks.command_cb(msg)
+                    self.user_callbacks.command_cb(decoding_result.command)
                 else:
                     if self.settings.verbose:
-                        print("WARN: Unhandled command %s received!" % msg.command_name)
-            elif message.type == C2dMessage.OTA:
-                msg = C2dOta(deserialize_dataclass(ProtocolOtaMessageJson, message_dict))
-                if not msg.validate():
-                    print("C2D Command is invalid: %s" % payload)
-                    return False
-                if len(msg.urls) > 0:
-                    if self.user_callbacks.ota_cb is not None:
-                        self.user_callbacks.ota_cb(msg)
-                    else:
-                        if self.settings.verbose:
-                            print("WARN: Unhandled OTA request received!")
+                        print("WARN: Unhandled command %s received!" % decoding_result.command.command_name)
+            elif decoding_result.ota is not None:
+                if self.user_callbacks.ota_cb is not None:
+                    self.user_callbacks.ota_cb(decoding_result.ota)
                 else:
-                    print("ERROR: Got OTA, but URLs list is empty!")
-            elif message.is_fatal:
-                print("Received C2D message %s from backend. Device should stop operation." % message.type_description)
-            elif message.needs_refresh:
-                print("Received C2D message %s from backend. Device should re-initialize the application." % message.type_description)
-            elif message.heartbeat_operation is not None:
-                operation_str = "start" if message.heartbeat_operation == True else "stop"
-                print("Received C2D message %s from backend. Device should %s heartbeat messages." % (message.type_description, operation_str))
+                    if self.settings.verbose:
+                        print("WARN: Unhandled OTA request received!")
+            elif generic_message.is_fatal:
+                print("Received C2D message %s from backend. Device should stop operation." % generic_message.type_description)
+            elif generic_message.needs_refresh:
+                print("Received C2D message %s from backend. Device should re-initialize the application." % generic_message.type_description)
+            elif generic_message.heartbeat_operation is not None:
+                operation_str = "start" if generic_message.heartbeat_operation == True else "stop"
+                print("Received C2D message %s from backend. Device should %s heartbeat messages." % (generic_message.type_description, operation_str))
             else:
-                print("C2D Message parsing for message type %d is not supported by this client. Message was: %s" % (message_packet.ct, payload))
+                print("C2D Message parsing for message type %d is not supported by this client. Message was: %s" % (generic_message.ct, payload))
+            return True
 
-        except JSONDecodeError:
-            print('Error: Incoming message not parseable: "%s"' % payload)
+        except C2DDecodeError:
+            print('C2D Parsing Error: "%s"' % payload)
             return False
 
     def _on_mqtt_connect(self, mqttc: PahoClient, obj, flags, reason_code, properties):
