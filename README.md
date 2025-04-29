@@ -10,7 +10,9 @@ a set of features for most common /IOTCONNECT use cases.
 If you need support for older Pyton, both Protocol 1.0 and 2.1, Properties (Shadow/Twin)
 Offline or HTTP Client along with other features like Gateway/Child support
 you should check out the standard
-[Iotconnect Python SDK](https://github.com/avnet-iotconnect/iotc-python-sdk) repository.
+[iotconnect-python-sdk](https://github.com/avnet-iotconnect/iotc-python-sdk) repository.
+
+See the [iotc-python-lite-sdk-demos](https://github.com/avnet-iotconnect/iotc-python-lite-sdk-demos) repository for implementation examples.
 
 # Licensing
 
