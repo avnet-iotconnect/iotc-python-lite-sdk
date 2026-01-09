@@ -368,7 +368,7 @@ class Client:
             decoding_result = decode_c2d_message(payload)
             generic_message = decoding_result.generic_message
             # if the user wants to handle this message type, stop processing further
-            generic_cb = self.user_callbacks.generic_message_callbacks.get(generic_message.type)
+            generic_cb = self.user_callbacks.generic_message_callbacks.get(generic_message.ct)
             if generic_cb is not None:
                 generic_cb(generic_message, decoding_result.raw_message)
                 return True
