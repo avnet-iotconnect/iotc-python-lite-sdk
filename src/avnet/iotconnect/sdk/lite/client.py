@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2024 Avnet
-# Authors: Nikola Markovic <nikola.markovic@avnet.com> et al.
+# Authors: Nikola Markovic <nikola.markovic@avnet.com> and Zackary Andraka <zackary.andraka@avnet.com> et al.
 
 import random
 import time
@@ -10,7 +10,9 @@ from typing import Callable, Optional
 
 from avnet.iotconnect.sdk.sdklib.dra import DeviceRestApi
 from avnet.iotconnect.sdk.sdklib.error import C2DDecodeError
-from avnet.iotconnect.sdk.sdklib.mqtt import C2dOta, C2dMessage, C2dCommand, C2dAck, TelemetryRecord, TelemetryValueType, encode_telemetry_records, encode_c2d_ack, decode_c2d_message
+from avnet.iotconnect.sdk.sdklib.mqtt import (C2dOta, C2dMessage, C2dCommand, C2dAck, C2dStartStream, C2dStopStream,
+                                              TelemetryRecord, TelemetryValueType, encode_telemetry_records, encode_c2d_ack,
+                                              decode_c2d_message)
 from avnet.iotconnect.sdk.sdklib.util import Timing
 from paho.mqtt.client import CallbackAPIVersion, MQTTErrorCode, DisconnectFlags, MQTTMessageInfo
 from paho.mqtt.client import Client as PahoClient
@@ -25,7 +27,9 @@ class Callbacks:
             command_cb: Optional[Callable[[C2dCommand], None]] = None,
             ota_cb: Optional[Callable[[C2dOta], None]] = None,
             disconnected_cb: Optional[Callable[[str, bool], None]] = None,
-            generic_message_callbacks: dict [int, Callable[[C2dMessage, dict], None]]= None
+            generic_message_callbacks: dict[int, Callable[[C2dMessage, dict], None]] = None,
+            start_stream_cb: Optional[Callable[[C2dStartStream], None]] = None,
+            stop_stream_cb: Optional[Callable[[C2dStopStream], None]] = None
     ):
         """
         Specify callbacks for C2D command, OTA (not implemented yet) or MQTT disconnection.
@@ -41,12 +45,20 @@ class Callbacks:
             Use this callback to asynchronously react to the back end disconnection event rather than polling Client.is_connected.
 
         :param generic_message_callbacks: A dictionary of callbacks indexed by the message type.
+
+        :param start_stream_cb: Callback function with first parameter being C2dStartStream object.
+            Use this callback to start Kinesis Video Streaming (command type 112).
+
+        :param stop_stream_cb: Callback function with first parameter being C2dStopStream object.
+            Use this callback to stop Kinesis Video Streaming (command type 113).
         """
 
         self.disconnected_cb = disconnected_cb
         self.command_cb = command_cb
         self.ota_cb = ota_cb
-        self.generic_message_callbacks = generic_message_callbacks or dict[int, C2dMessage]() # empty dict otherwise
+        self.generic_message_callbacks = generic_message_callbacks or dict[int, C2dMessage]()
+        self.start_stream_cb = start_stream_cb
+        self.stop_stream_cb = stop_stream_cb
 
 
 class ClientSettings:
@@ -62,7 +74,7 @@ class ClientSettings:
         if verbose:
             from . import __version__ as SDK_VERSION
             from avnet.iotconnect.sdk.sdklib import __version__ as LIB_VERSION
-            print(f"/IOTCONNENCT Lite Client started with version {SDK_VERSION} and Lib version {LIB_VERSION}")
+            print(f"/IOTCONNECT Lite Client started with version {SDK_VERSION} and Lib version {LIB_VERSION}")
         self.verbose = verbose
         self.connect_timeout_secs = connect_timeout_secs
         self.connect_tries = connect_tries
@@ -142,8 +154,10 @@ class Client:
     ):
         self.user_callbacks = callbacks or Callbacks()
         self.settings = settings or ClientSettings()
+        self.config = config
 
-        self.mqtt_config = DeviceRestApi(config.to_properties(), verbose=self.settings.verbose).get_identity_data()  # can raise DeviceConfigError
+        self.mqtt_config = DeviceRestApi(config.to_properties(),
+                                         verbose=self.settings.verbose).get_identity_data()  # can raise DeviceConfigError
 
         self.mqtt = PahoClient(
             callback_api_version=CallbackAPIVersion.VERSION2,
@@ -151,7 +165,8 @@ class Client:
         )
         # TODO: User configurable with defaults
         self.mqtt.reconnect_delay_set(min_delay=1, max_delay=int(self.settings.connect_timeout_secs / 2 + 1))
-        self.mqtt.tls_set(certfile=config.device_cert_path, keyfile=config.device_pkey_path, ca_certs=config.server_ca_cert_path)
+        self.mqtt.tls_set(certfile=config.device_cert_path, keyfile=config.device_pkey_path,
+                          ca_certs=config.server_ca_cert_path)
         self.mqtt.username = self.mqtt_config.username
 
         self.mqtt.on_message = self._on_mqtt_message
@@ -226,10 +241,10 @@ class Client:
         return ret
 
     def send_telemetry(self, values: dict[str, TelemetryValueType], timestamp: datetime = None):
-        """ Sends a single telemetry dataset. 
-        If you need gateway/child functionality or need to send multiple value sets in one packet, 
+        """ Sends a single telemetry dataset.
+        If you need gateway/child functionality or need to send multiple value sets in one packet,
         use the send_telemetry_records() method.
-         
+
         :param TelemetryValues values:
             The name-value telemetry pairs to send. Each value can be
                 - a primitive value: Maps directly to a JSON string, number or boolean
@@ -278,8 +293,7 @@ class Client:
                 print(">", packet)
             return ret
 
-
-    def send_command_ack(self, original_message: C2dCommand, status: int, message_str = None):
+    def send_command_ack(self, original_message: C2dCommand, status: int, message_str=None):
         """
         Send Command acknowledgement.
 
@@ -299,14 +313,13 @@ class Client:
             original_command=original_message.command_name
         )
 
-    def send_ota_ack(self, original_message: C2dOta, status: int, message_str = None):
+    def send_ota_ack(self, original_message: C2dOta, status: int, message_str=None):
         """
         Send OTA acknowledgement.
         See the C2dAck comments for best practices with OTA download ACks.
 
         :param original_message: The original message that was received in the callback.
         :param status: For example: C2dAck.OTA_DOWNLOAD_FAILED.
-        :param message_str: (Optional) For example: "Failed to unzip the OTA package".
         :param message_str: (Optional) For example: "Failed to unzip the OTA package".
         """
         if original_message.type != C2dMessage.OTA:
@@ -319,7 +332,8 @@ class Client:
             message_str=message_str
         )
 
-    def send_ack(self, ack_id: str, message_type: int, status: int, message_str: str = None, original_command: str = None):
+    def send_ack(self, ack_id: str, message_type: int, status: int, message_str: str = None,
+                 original_command: str = None):
         """
         Send Command or OTA ack while having only ACK ID
 
@@ -337,16 +351,21 @@ class Client:
             print('Message NOT sent. Not connected!')
         elif ack_id is None or len(ack_id) == 0:
             if original_command is not None:
-                print('Error: Message ACK ID missing. Ensure to set "Acknowledgement Required" in the template for command %s!' % original_command)
+                print(
+                    'Error: Message ACK ID missing. Ensure to set "Acknowledgement Required" in the template for command %s!' % original_command)
             else:
-                print('Error: Message ACK ID missing. Ensure to set "Acknowledgement Required" in the template the command!' % original_command)
+                print(
+                    'Error: Message ACK ID missing. Ensure to set "Acknowledgement Required" in the template the command!')
             return
         elif message_type not in (C2dMessage.COMMAND, C2dMessage.OTA):
-            print('Warning: Message type %d does not appear to be a valid message type!' % message_type)  # let it pass, just in case we can still somehow send different kind of ack
+            print(
+                'Warning: Message type %d does not appear to be a valid message type!' % message_type)  # let it pass, just in case we can still somehow send different kind of ack
         elif message_type == C2dMessage.COMMAND and not C2dAck.is_valid_cmd_status(status):
-            print('Warning: Status %d does not appear to be a valid command ACK status!' % status) # let it pass, just in case there is a new status
+            print(
+                'Warning: Status %d does not appear to be a valid command ACK status!' % status)  # let it pass, just in case there is a new status
         elif message_type == C2dMessage.OTA and not C2dAck.is_valid_ota_status(status):
-            print('Warning: Status %d does not appear to be a valid OTA ACK status!' % status) # let it pass, just in case there is a new status
+            print(
+                'Warning: Status %d does not appear to be a valid OTA ACK status!' % status)  # let it pass, just in case there is a new status
 
         packet = encode_c2d_ack(ack_id, message_type, status, message_str)
         ret = self.mqtt.publish(
@@ -367,6 +386,7 @@ class Client:
 
             decoding_result = decode_c2d_message(payload)
             generic_message = decoding_result.generic_message
+
             # if the user wants to handle this message type, stop processing further
             generic_cb = self.user_callbacks.generic_message_callbacks.get(generic_message.ct)
             if generic_cb is not None:
@@ -374,10 +394,10 @@ class Client:
                 return True
 
             if decoding_result.command is not None:
-#               TODO: Deal with runtime qualification
-#               if msg.command_name == 'aws-qualification-start':
-#                    self._aws_qualification_start(msg.command_args)
-#                elif self.user_callbacks.command_cb is not None:
+                #               TODO: Deal with runtime qualification
+                #               if msg.command_name == 'aws-qualification-start':
+                #                    self._aws_qualification_start(msg.command_args)
+                #                elif self.user_callbacks.command_cb is not None:
                 if self.user_callbacks.command_cb is not None:
                     self.user_callbacks.command_cb(decoding_result.command)
                 else:
@@ -389,15 +409,31 @@ class Client:
                 else:
                     if self.settings.verbose:
                         print("WARN: Unhandled OTA request received!")
+            elif decoding_result.start_stream is not None:
+                if self.user_callbacks.start_stream_cb is not None:
+                    self.user_callbacks.start_stream_cb(decoding_result.start_stream)
+                else:
+                    if self.settings.verbose:
+                        print("WARN: Unhandled start stream request received!")
+            elif decoding_result.stop_stream is not None:
+                if self.user_callbacks.stop_stream_cb is not None:
+                    self.user_callbacks.stop_stream_cb(decoding_result.stop_stream)
+                else:
+                    if self.settings.verbose:
+                        print("WARN: Unhandled stop stream request received!")
             elif generic_message.is_fatal:
-                print("Received C2D message %s from backend. Device should stop operation." % generic_message.type_description)
+                print(
+                    "Received C2D message %s from backend. Device should stop operation." % generic_message.type_description)
             elif generic_message.needs_refresh:
-                print("Received C2D message %s from backend. Device should re-initialize the application." % generic_message.type_description)
+                print(
+                    "Received C2D message %s from backend. Device should re-initialize the application." % generic_message.type_description)
             elif generic_message.heartbeat_operation is not None:
                 operation_str = "start" if generic_message.heartbeat_operation == True else "stop"
-                print("Received C2D message %s from backend. Device should %s heartbeat messages." % (generic_message.type_description, operation_str))
+                print("Received C2D message %s from backend. Device should %s heartbeat messages." % (
+                    generic_message.type_description, operation_str))
             else:
-                print("C2D Message parsing for message type %d is not supported by this client. Message was: %s" % (generic_message.ct, payload))
+                print("C2D Message parsing for message type %d is not supported by this client. Message was: %s" % (
+                    generic_message.ct, payload))
             return True
 
         except C2DDecodeError:
@@ -458,3 +494,85 @@ class Client:
 
         else:
             print("Malformed AWS qualification command. Missing command argument!")
+
+    def fetch_sync_response(self):
+        import requests
+        try:
+            props = self.config.to_properties()
+
+            # Step 1: Discovery API call
+            discovery_url = f"https://discovery.iotconnect.io/api/v2.1/dsdk/cpId/{props.cpid}/env/{props.env}?pf={props.platform}"
+            if self.settings.verbose:
+                print(f"Requesting Discovery: {discovery_url}")
+
+            discovery_response = requests.get(discovery_url, timeout=10)
+            discovery_data = discovery_response.json()
+            base_url = discovery_data["d"]["bu"]
+
+            # Step 2: Sync/Identity API call
+            sync_url = f"{base_url}/uid/{props.duid}"
+            if self.settings.verbose:
+                print(f"Requesting Identity: {sync_url}")
+
+            sync_response = requests.get(sync_url, timeout=10)
+            sync_data = sync_response.json()
+            return sync_data.get("d", {})
+
+        except Exception as e:
+            if self.settings.verbose:
+                print(f"Failed to fetch sync response: {e}")
+            return {}
+
+    def get_aws_credentials(self, credential_endpoint: str) -> Optional[tuple]:
+        from urllib.parse import urlparse
+        import requests
+
+        if not credential_endpoint:
+            print("AWS credential endpoint is required")
+            return None
+
+        url = credential_endpoint.strip()
+        try:
+            p = urlparse(url)
+            if p.scheme != "https" or not url.endswith("/credentials"):
+                print(f"Bad role-alias URL: {url}. URL must use HTTPS and end with '/credentials'")
+                return None
+            if not p.netloc:
+                print(f"Invalid URL format: {url}. Missing domain name")
+                return None
+        except Exception as e:
+            print(f"Failed to parse URL '{url}': {e}")
+            return None
+
+        if self.settings.verbose:
+            print(f"AWS credentials endpoint: {url}")
+            print(f"Using Thing name: {self.mqtt_config.client_id}")
+
+        try:
+            response = requests.get(
+                url=url,
+                cert=(self.config.device_cert_path, self.config.device_pkey_path),
+                verify=self.config.server_ca_cert_path,
+                headers={
+                    "x-amzn-iot-thingname": self.mqtt_config.client_id
+                },
+            )
+            res_load = response.json()
+
+            if self.settings.verbose:
+                print(res_load)
+
+            if response.status_code == 200:
+                return (
+                    res_load["credentials"]["accessKeyId"],
+                    res_load["credentials"]["secretAccessKey"],
+                    res_load["credentials"]["sessionToken"]
+                )
+            else:
+                print(f"Response (non-200): {res_load}")
+                print("Failed to get AWS credentials")
+                return None
+
+        except requests.RequestException as e:
+            print(f"Error obtaining credentials: {e}")
+            return None
