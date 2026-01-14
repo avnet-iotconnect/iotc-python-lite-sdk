@@ -495,34 +495,6 @@ class Client:
         else:
             print("Malformed AWS qualification command. Missing command argument!")
 
-    def fetch_sync_response(self):
-        import requests
-        try:
-            props = self.config.to_properties()
-
-            # Step 1: Discovery API call
-            discovery_url = f"https://discovery.iotconnect.io/api/v2.1/dsdk/cpId/{props.cpid}/env/{props.env}?pf={props.platform}"
-            if self.settings.verbose:
-                print(f"Requesting Discovery: {discovery_url}")
-
-            discovery_response = requests.get(discovery_url, timeout=10)
-            discovery_data = discovery_response.json()
-            base_url = discovery_data["d"]["bu"]
-
-            # Step 2: Sync/Identity API call
-            sync_url = f"{base_url}/uid/{props.duid}"
-            if self.settings.verbose:
-                print(f"Requesting Identity: {sync_url}")
-
-            sync_response = requests.get(sync_url, timeout=10)
-            sync_data = sync_response.json()
-            return sync_data.get("d", {})
-
-        except Exception as e:
-            if self.settings.verbose:
-                print(f"Failed to fetch sync response: {e}")
-            return {}
-
     def get_aws_credentials(self, credential_endpoint: str) -> Optional[tuple]:
         from urllib.parse import urlparse
         import requests
