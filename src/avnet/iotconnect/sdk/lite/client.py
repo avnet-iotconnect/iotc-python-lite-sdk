@@ -10,9 +10,9 @@ from typing import Callable, Optional
 
 from avnet.iotconnect.sdk.sdklib.dra import DeviceRestApi
 from avnet.iotconnect.sdk.sdklib.error import C2DDecodeError
-from avnet.iotconnect.sdk.sdklib.mqtt import (C2dOta, C2dMessage, C2dCommand, C2dAck, C2dStartStream, C2dStopStream,
-                                              TelemetryRecord, TelemetryValueType, encode_telemetry_records, encode_c2d_ack,
-                                              decode_c2d_message)
+from avnet.iotconnect.sdk.sdklib.mqtt import (C2dOta, C2dMessage, C2dCommand, C2dAck, TelemetryRecord,
+                                              TelemetryValueType,
+                                              encode_telemetry_records, encode_c2d_ack, decode_c2d_message)
 from avnet.iotconnect.sdk.sdklib.util import Timing
 from paho.mqtt.client import CallbackAPIVersion, MQTTErrorCode, DisconnectFlags, MQTTMessageInfo
 from paho.mqtt.client import Client as PahoClient
@@ -28,8 +28,8 @@ class Callbacks:
             ota_cb: Optional[Callable[[C2dOta], None]] = None,
             disconnected_cb: Optional[Callable[[str, bool], None]] = None,
             generic_message_callbacks: dict[int, Callable[[C2dMessage, dict], None]] = None,
-            start_stream_cb: Optional[Callable[[C2dStartStream], None]] = None,
-            stop_stream_cb: Optional[Callable[[C2dStopStream], None]] = None
+            start_stream_cb: Optional[Callable[[], None]] = None,
+            stop_stream_cb: Optional[Callable[[], None]] = None,
     ):
         """
         Specify callbacks for C2D command, OTA (not implemented yet) or MQTT disconnection.
@@ -46,11 +46,12 @@ class Callbacks:
 
         :param generic_message_callbacks: A dictionary of callbacks indexed by the message type.
 
-        :param start_stream_cb: Callback function with first parameter being C2dStartStream object.
-            Use this callback to start Kinesis Video Streaming (command type 112).
+        :param start_stream_cb: Callback function for start stream command (type 112).
+            Use this callback to start video streaming when requested by the back end.
 
-        :param stop_stream_cb: Callback function with first parameter being C2dStopStream object.
-            Use this callback to stop Kinesis Video Streaming (command type 113).
+        :param stop_stream_cb: Callback function for stop stream command (type 113).
+            Use this callback to stop video streaming when requested by the back end.
+
         """
 
         self.disconnected_cb = disconnected_cb
@@ -156,8 +157,8 @@ class Client:
         self.settings = settings or ClientSettings()
         self.config = config
 
-        self.mqtt_config = DeviceRestApi(config.to_properties(),
-                                         verbose=self.settings.verbose).get_identity_data()  # can raise DeviceConfigError
+        self._dra = DeviceRestApi(config.to_properties(), verbose=self.settings.verbose)
+        self.mqtt_config = self._dra.get_identity_data()
 
         self.mqtt = PahoClient(
             callback_api_version=CallbackAPIVersion.VERSION2,
@@ -387,8 +388,19 @@ class Client:
             decoding_result = decode_c2d_message(payload)
             generic_message = decoding_result.generic_message
 
+            if generic_message.type == 112 and self.user_callbacks.start_stream_cb is not None:
+                if self.settings.verbose:
+                    print("Received start stream command")
+                self.user_callbacks.start_stream_cb()
+                return True
+            elif generic_message.type == 113 and self.user_callbacks.stop_stream_cb is not None:
+                if self.settings.verbose:
+                    print("Received stop stream command")
+                self.user_callbacks.stop_stream_cb()
+                return True
+
             # if the user wants to handle this message type, stop processing further
-            generic_cb = self.user_callbacks.generic_message_callbacks.get(generic_message.ct)
+            generic_cb = self.user_callbacks.generic_message_callbacks.get(generic_message.type)
             if generic_cb is not None:
                 generic_cb(generic_message, decoding_result.raw_message)
                 return True
@@ -409,18 +421,6 @@ class Client:
                 else:
                     if self.settings.verbose:
                         print("WARN: Unhandled OTA request received!")
-            elif decoding_result.start_stream is not None:
-                if self.user_callbacks.start_stream_cb is not None:
-                    self.user_callbacks.start_stream_cb(decoding_result.start_stream)
-                else:
-                    if self.settings.verbose:
-                        print("WARN: Unhandled start stream request received!")
-            elif decoding_result.stop_stream is not None:
-                if self.user_callbacks.stop_stream_cb is not None:
-                    self.user_callbacks.stop_stream_cb(decoding_result.stop_stream)
-                else:
-                    if self.settings.verbose:
-                        print("WARN: Unhandled stop stream request received!")
             elif generic_message.is_fatal:
                 print(
                     "Received C2D message %s from backend. Device should stop operation." % generic_message.type_description)
@@ -496,55 +496,10 @@ class Client:
             print("Malformed AWS qualification command. Missing command argument!")
 
     def get_aws_credentials(self, credential_endpoint: str) -> Optional[tuple]:
-        from urllib.parse import urlparse
-        import requests
-
-        if not credential_endpoint:
-            print("AWS credential endpoint is required")
-            return None
-
-        url = credential_endpoint.strip()
-        try:
-            p = urlparse(url)
-            if p.scheme != "https" or not url.endswith("/credentials"):
-                print(f"Bad role-alias URL: {url}. URL must use HTTPS and end with '/credentials'")
-                return None
-            if not p.netloc:
-                print(f"Invalid URL format: {url}. Missing domain name")
-                return None
-        except Exception as e:
-            print(f"Failed to parse URL '{url}': {e}")
-            return None
-
-        if self.settings.verbose:
-            print(f"AWS credentials endpoint: {url}")
-            print(f"Using Thing name: {self.mqtt_config.client_id}")
-
-        try:
-            response = requests.get(
-                url=url,
-                cert=(self.config.device_cert_path, self.config.device_pkey_path),
-                verify=self.config.server_ca_cert_path,
-                headers={
-                    "x-amzn-iot-thingname": self.mqtt_config.client_id
-                },
-            )
-            res_load = response.json()
-
-            if self.settings.verbose:
-                print(res_load)
-
-            if response.status_code == 200:
-                return (
-                    res_load["credentials"]["accessKeyId"],
-                    res_load["credentials"]["secretAccessKey"],
-                    res_load["credentials"]["sessionToken"]
-                )
-            else:
-                print(f"Response (non-200): {res_load}")
-                print("Failed to get AWS credentials")
-                return None
-
-        except requests.RequestException as e:
-            print(f"Error obtaining credentials: {e}")
-            return None
+        return self._dra.get_aws_credentials(
+            credential_endpoint=credential_endpoint,
+            device_cert_path=self.config.device_cert_path,
+            device_pkey_path=self.config.device_pkey_path,
+            server_ca_cert_path=self.config.server_ca_cert_path,
+            thing_name=self.mqtt_config.client_id
+        )
