@@ -27,6 +27,34 @@ camera_options = {
 }
 
 
+def extract_and_run_tar_gz(targz_filename: str):
+    try:
+        subprocess.run(("tar", "-xzvf", targz_filename, "--overwrite"), check=True)
+        current_directory = os.getcwd()
+        script_file_path = os.path.join(current_directory, "install.sh")
+        # If install.sh is found in the current directory, execute it and then delete it
+        # so it is not executed automatically again for future packages (may not include an install.sh)
+        if os.path.isfile(script_file_path):
+            try:
+                subprocess.run(['bash', script_file_path], check=True)
+                os.remove(script_file_path)
+                print(f"Successfully executed install.sh")
+                return True
+            except subprocess.CalledProcessError as e:
+                os.remove(script_file_path)
+                print(f"Error executing install.sh: {e}")
+                return False
+            except Exception as e:
+                os.remove(script_file_path)
+                print(f"An error occurred: {e}")
+                return False
+        else:
+            print("install.sh not found in the current directory.")
+            return True
+    except subprocess.CalledProcessError:
+        return False
+
+
 def detect_video_device() -> Optional[str]:
     try:
         devices = [d for d in os.listdir("/dev") if d.startswith("video")]
@@ -184,8 +212,8 @@ def _pipe_reader(prefix: str, pipe):
 def on_start_stream():
     print("Starting video stream...")
 
-    # Access KVS config directly from mqtt_config (populated at startup)
-    if not client.mqtt_config.kvs.enabled:
+    # Check if KVS is enabled for this device
+    if not client.kvs_enabled:
         print("Kinesis Video Streaming is not enabled for this device")
         return
 
@@ -195,8 +223,8 @@ def on_start_stream():
 
     try:
         print("Fetching AWS credentials...")
-        # Use the credential endpoint from mqtt_config
-        creds = client.get_aws_credentials(client.mqtt_config.kvs.credential_endpoint)
+        # Get credentials using the endpoint from device identity
+        creds = client.get_aws_credentials()
 
         if creds is None:
             print("Failed to get AWS credentials")
@@ -206,7 +234,7 @@ def on_start_stream():
 
         print("Starting GStreamer...")
         process = start_video_stream(
-            stream_name=client.mqtt_config.client_id,
+            stream_name=client.client_id,
             access_key=access_key,
             secret_key=secret_key,
             session_token=session_token,
@@ -227,9 +255,11 @@ def on_start_stream():
 
 def on_stop_stream():
     print("Stopping video stream...")
+
     if not is_streaming():
         print("No video stream is running")
         return
+
     if stop_video_stream():
         print("Video stream stopped")
     else:
@@ -336,12 +366,12 @@ if __name__ == "__main__":
 
     print("Connected to /IOTCONNECT")
 
-    # Check KVS configuration directly from mqtt_config (already populated at startup)
-    if client.mqtt_config.kvs.enabled:
+    # Check KVS configuration
+    if client.kvs_enabled:
         print(f"\nKinesis Video Streaming is ENABLED")
-        print(f"Endpoint: {client.mqtt_config.kvs.credential_endpoint}")
-        print(f"Auto-start: {client.mqtt_config.kvs.auto_start}")
-        if client.mqtt_config.kvs.auto_start:
+        print(f"Endpoint: {client.kvs_credential_endpoint}")
+        print(f"Auto-start: {client.kvs_auto_start}")
+        if client.kvs_auto_start:
             print("Auto-starting stream in 3 seconds...")
             time.sleep(3)
             on_start_stream()  # Call callback directly for auto-start

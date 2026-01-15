@@ -158,17 +158,17 @@ class Client:
         self.config = config
 
         self._dra = DeviceRestApi(config.to_properties(), verbose=self.settings.verbose)
-        self.mqtt_config = self._dra.get_identity_data()
+        self._mqtt_config = self._dra.get_identity_data()  # can raise DeviceConfigError
 
         self.mqtt = PahoClient(
             callback_api_version=CallbackAPIVersion.VERSION2,
-            client_id=self.mqtt_config.client_id
+            client_id=self._mqtt_config.client_id
         )
         # TODO: User configurable with defaults
         self.mqtt.reconnect_delay_set(min_delay=1, max_delay=int(self.settings.connect_timeout_secs / 2 + 1))
         self.mqtt.tls_set(certfile=config.device_cert_path, keyfile=config.device_pkey_path,
                           ca_certs=config.server_ca_cert_path)
-        self.mqtt.username = self.mqtt_config.username
+        self.mqtt.username = self._mqtt_config.username
 
         self.mqtt.on_message = self._on_mqtt_message
         self.mqtt.on_connect = self._on_mqtt_connect
@@ -181,6 +181,26 @@ class Client:
     def timestamp_now(cls) -> datetime:
         """ Returns the UTC timestamp that can be used to stamp telemetry records """
         return datetime.now(timezone.utc)
+
+    @property
+    def client_id(self) -> str:
+        """The MQTT client ID / IoT Thing name"""
+        return self._mqtt_config.client_id
+
+    @property
+    def kvs_enabled(self) -> bool:
+        """Whether Kinesis Video Streaming is enabled for this device"""
+        return self._mqtt_config.kvs.enabled
+
+    @property
+    def kvs_credential_endpoint(self) -> Optional[str]:
+        """The AWS credential endpoint URL for KVS"""
+        return self._mqtt_config.kvs.credential_endpoint
+
+    @property
+    def kvs_auto_start(self) -> bool:
+        """Whether KVS should auto-start on connection"""
+        return self._mqtt_config.kvs.auto_start
 
     def is_connected(self):
         return self.mqtt.is_connected()
@@ -208,7 +228,7 @@ class Client:
             try:
                 t = Timing()
                 mqtt_error = self.mqtt.connect(
-                    host=self.mqtt_config.host,
+                    host=self._mqtt_config.host,
                     port=8883
                 )
                 if mqtt_error != MQTTErrorCode.MQTT_ERR_SUCCESS:
@@ -226,14 +246,14 @@ class Client:
             except (SSLError, TimeoutError, OSError) as ex:
                 # OSError includes socket.gaierror when host could not be resolved
                 # This could also be temporary, so keep trying
-                print("Failed to connect to host %s. Exception: %s" % (self.mqtt_config.host, str(ex)))
+                print("Failed to connect to host %s. Exception: %s" % (self._mqtt_config.host, str(ex)))
 
             backoff_ms = random.randrange(1000, self.settings.connect_backoff_max_secs * 1000)
             print("Retrying connection... Backing off for %d ms." % backoff_ms)
             # Jitter back off a random number of milliseconds between 1 and 10 seconds.
             time.sleep(backoff_ms / 1000)
 
-        self.mqtt.subscribe(self.mqtt_config.topics.c2d, qos=1)
+        self.mqtt.subscribe(self._mqtt_config.topics.c2d, qos=1)
 
     def disconnect(self) -> MQTTErrorCode:
         ret = self.mqtt.disconnect()
@@ -286,7 +306,7 @@ class Client:
         else:
             packet = encode_telemetry_records(records)
             ret = self.mqtt.publish(
-                topic=self.mqtt_config.topics.rpt,
+                topic=self._mqtt_config.topics.rpt,
                 qos=1,
                 payload=packet
             )
@@ -370,7 +390,7 @@ class Client:
 
         packet = encode_c2d_ack(ack_id, message_type, status, message_str)
         ret = self.mqtt.publish(
-            topic=self.mqtt_config.topics.ack,
+            topic=self._mqtt_config.topics.ack,
             qos=1,
             payload=packet
         )
@@ -388,6 +408,7 @@ class Client:
             decoding_result = decode_c2d_message(payload)
             generic_message = decoding_result.generic_message
 
+            # Check for KVS-specific callbacks first (112, 113)
             if generic_message.type == 112 and self.user_callbacks.start_stream_cb is not None:
                 if self.settings.verbose:
                     print("Received start stream command")
@@ -470,16 +491,16 @@ class Client:
         if len(command_args) >= 1:
             host = command_args[0]
             print("Starting AWS Device Qualification for", host)
-            self.mqtt_config.topics.rpt = 'qualification'
-            self.mqtt_config.topics.c2d = 'qualification'
-            self.mqtt_config.topics.ack = 'qualification'
-            self.mqtt_config.host = host
+            self._mqtt_config.topics.rpt = 'qualification'
+            self._mqtt_config.topics.c2d = 'qualification'
+            self._mqtt_config.topics.ack = 'qualification'
+            self._mqtt_config.host = host
             self.mqtt.on_log = log_callback
             self.disconnect()
             while True:
                 connected_time = Timing()
                 if not self.is_connected():
-                    print('(re)connecting to', self.mqtt_config.host)
+                    print('(re)connecting to', self._mqtt_config.host)
                     self.connect()
                     connected_time.reset(False)  # reset the timer
                 else:
@@ -495,11 +516,12 @@ class Client:
         else:
             print("Malformed AWS qualification command. Missing command argument!")
 
-    def get_aws_credentials(self, credential_endpoint: str) -> Optional[tuple]:
+    def get_aws_credentials(self, credential_endpoint: str = None) -> Optional[tuple]:
+        endpoint = credential_endpoint or self._mqtt_config.kvs.credential_endpoint
         return self._dra.get_aws_credentials(
-            credential_endpoint=credential_endpoint,
+            credential_endpoint=endpoint,
             device_cert_path=self.config.device_cert_path,
             device_pkey_path=self.config.device_pkey_path,
             server_ca_cert_path=self.config.server_ca_cert_path,
-            thing_name=self.mqtt_config.client_id
+            thing_name=self._mqtt_config.client_id
         )
