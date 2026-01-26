@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from os import access, R_OK
 from typing import Optional
 
-from avnet.iotconnect.sdk.sdklib.config import DeviceProperties
+from avnet.iotconnect.sdk.sdklib.config import DeviceProperties, DeviceTlsCredentials
 from avnet.iotconnect.sdk.sdklib.error import DeviceConfigError
 from avnet.iotconnect.sdk.sdklib.protocol.files import ProtocolDeviceConfigJson
 from avnet.iotconnect.sdk.sdklib.util import deserialize_dataclass
@@ -85,6 +85,12 @@ class DeviceConfig:
         )
         properties.validate()
         return properties
+    def to_tls_credentials(self) -> DeviceTlsCredentials:
+        return DeviceTlsCredentials(
+            device_cert_path=self.device_cert_path,
+            device_pkey_path=self.device_pkey_path,
+            server_ca_cert_path=self.server_ca_cert_path
+        )
 
     @classmethod
     def from_iotc_device_config_json(

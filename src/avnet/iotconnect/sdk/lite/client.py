@@ -4,12 +4,13 @@
 
 import random
 import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from ssl import SSLError
-from typing import Callable, Optional
+from typing import Callable, Optional, List, Dict
 
-from avnet.iotconnect.sdk.sdklib.dra import DeviceRestApi
-from avnet.iotconnect.sdk.sdklib.error import C2DDecodeError
+from avnet.iotconnect.sdk.sdklib.dra import DeviceRestApi, AwsCredentialsResponse, DeviceIdentityData
+from avnet.iotconnect.sdk.sdklib.error import C2DDecodeError, NotSupportedError
 from avnet.iotconnect.sdk.sdklib.mqtt import (C2dOta, C2dMessage, C2dCommand, C2dAck, TelemetryRecord,
                                               TelemetryValueType,
                                               encode_telemetry_records, encode_c2d_ack, decode_c2d_message)
@@ -28,11 +29,10 @@ class Callbacks:
             ota_cb: Optional[Callable[[C2dOta], None]] = None,
             disconnected_cb: Optional[Callable[[str, bool], None]] = None,
             generic_message_callbacks: dict[int, Callable[[C2dMessage, dict], None]] = None,
-            start_stream_cb: Optional[Callable[[], None]] = None,
-            stop_stream_cb: Optional[Callable[[], None]] = None,
+            vs_cb: Optional[Callable[['KvsClient'], None]] = None
     ):
         """
-        Specify callbacks for C2D command, OTA (not implemented yet) or MQTT disconnection.
+        Specify callbacks for C2D command, OTA, Video Streaming or MQTT disconnection.
 
         :param command_cb: Callback function with first parameter being C2dCommand object.
             Use this callback to process commands sent by the back end.
@@ -46,20 +46,132 @@ class Callbacks:
 
         :param generic_message_callbacks: A dictionary of callbacks indexed by the message type.
 
-        :param start_stream_cb: Callback function for start stream command (type 112).
-            Use this callback to start video streaming when requested by the back end.
-
-        :param stop_stream_cb: Callback function for stop stream command (type 113).
-            Use this callback to stop video streaming when requested by the back end.
-
+        :param vs_cb: Callback function for video streaming related events.
         """
 
         self.disconnected_cb = disconnected_cb
         self.command_cb = command_cb
         self.ota_cb = ota_cb
         self.generic_message_callbacks = generic_message_callbacks or dict[int, C2dMessage]()
-        self.start_stream_cb = start_stream_cb
-        self.stop_stream_cb = stop_stream_cb
+        self.vs_cb = vs_cb
+
+class AwsCredentialsProvider:
+    def __init__(self, dra: DeviceRestApi, credentials_endpoint: str, verbose: bool = False):
+        """
+        This class provides a way to obtain and refresh AWS temporary credentials.
+
+        If auto_obtain is set to True, the first call to get_credentials() will automatically
+        obtain the credentials if they are not already obtained.
+
+        If refresh_before_expiry_secs is set, get_credentials() will be refrsh accordingly.
+        """
+        self._dra = dra
+        self.credentials_endpoint = credentials_endpoint
+        self.verbose = False
+        self.credentials: Optional[AwsCredentialsResponse] = None
+
+    def obtain_credentials(self):
+        if self.verbose and self.credentials is not None:
+            print("Refreshing AWS credentials. Current expiry secs: %d" % self.get_seconds_until_credentials_expiry())
+        self.credentials = self._dra.get_aws_credentials(credentials_endpoint=self.credentials_endpoint)
+
+    def get_secs_to_expiry(self) -> float:
+        if self.credentials is None:
+            return 0.0
+        delta = self.credentials.expiration - datetime.now(timezone.utc)
+        return delta.total_seconds()
+
+
+    def get_credentials(self, refresh_if_secs_to_expiry: Optional[int] = None, env: Optional[Dict[str, str]] = None) -> Optional[AwsCredentialsResponse]:
+        """
+        Returns the current AWS temporary credentials or NONE if they expired.
+
+        If refresh_if_secs_to_expiry is provided current credentials will be refreshed if they are expired.
+
+        If env dictionary is provided, the AWS credentials will be set in the dictionary. This can be
+        useful when invoking shell commands.
+        """
+        if self.credentials is None:
+            return None
+
+        if refresh_if_secs_to_expiry is not None:
+            if self.get_secs_to_expiry() < refresh_if_secs_to_expiry:
+                print("Refreshing AWS credentials before expiry.")
+                return self.obtain_credentials()
+
+        if self.get_secs_to_expiry() <= 0:
+            if self.verbose:
+                print("AWS credentials have expired.")
+            return None
+
+        if env is not None:
+            env["AWS_ACCESS_KEY_ID"] = self.credentials.access_key_id
+            env["AWS_SECRET_ACCESS_KEY"] = self.credentials.secret_access_key
+            env["AWS_SESSION_TOKEN"] = self.credentials.session_token
+        return self.credentials
+
+    def get_seconds_until_credentials_expiry(self) -> float:
+        self.get_credentials() # trigger a refreh if needed
+        return (self.credentials.expiration - datetime.now(timezone.utc)).total_seconds()
+
+class KvsClient(AwsCredentialsProvider):
+    def __init__(
+            self,
+            dra: DeviceRestApi,
+            identity_data: DeviceIdentityData,
+            verbose: bool = False
+    ):
+        """
+        This class provides KVS-related information for the device and a way to obtain AWS temporary credentials.
+
+        The auto_start property indicates whether KVS streaming should be started automatically.
+        the is_streaming property indicates the current desired status of KVS streaming.
+        """
+        self.identity_data = identity_data
+        if not self.identity_data.vs or not self.identity_data.vs.url:
+            raise NotSupportedError("KVS is not enabled for this device")
+
+        super().__init__(dra, self.identity_data.vs.url, verbose=verbose)
+
+        self.is_auto_start = self.identity_data.vs.as_
+        self.is_streaming = self.is_auto_start
+
+
+@dataclass
+class S3BucketInfo:
+    bucket_name: str = field(default=None)
+    is_customer_owned: bool = field(default=False)
+    role_arn: str = field(default=None)
+
+class S3Client(AwsCredentialsProvider):
+    """
+    This class provides S3 access information for the device and a way to obtain AWS temporary credentials.
+
+    When is_customer_owned for a bucket is True, role_arn will be need to be used to make an assume role request with
+    the credentials from AWsCredentialsProvider. Those new temporary credentials can then be used to access the actual S3 bucket.
+    Obtaining these temporary credentials is outside of scope of this SDK at the moment.
+
+    """
+
+    def __init__(
+            self,
+            dra: DeviceRestApi,
+            identity_data: DeviceIdentityData
+    ):
+        self.identity_data = identity_data
+        if not self.identity_data.filesystem or not self.identity_data.filesystem.url:
+            raise NotSupportedError("Filesystem (S3) support is not enabled for this device")
+
+        super().__init__(dra, self.identity_data.filesystem.url)
+
+        self.buckets = []
+        self.buckets = [
+            S3BucketInfo(bucket_name=bucket.bn,is_customer_owned=bucket.ca,role_arn=bucket.rarn)
+            for bucket in self.identity_data.filesystem.buckets
+        ]
+
+    def get_buckets(self) -> List[S3BucketInfo]:
+        return self.buckets
 
 
 class ClientSettings:
@@ -157,18 +269,21 @@ class Client:
         self.settings = settings or ClientSettings()
         self.config = config
 
-        self._dra = DeviceRestApi(config.to_properties(), verbose=self.settings.verbose)
-        self._mqtt_config = self._dra.get_identity_data()  # can raise DeviceConfigError
+        self._dra = DeviceRestApi(
+            config = config.to_properties(),
+            tls_credentials= config.to_tls_credentials(),
+            verbose=self.settings.verbose)
+        self._identity_data = self._dra.get_identity_data()  # can raise DeviceConfigError
 
         self.mqtt = PahoClient(
             callback_api_version=CallbackAPIVersion.VERSION2,
-            client_id=self._mqtt_config.client_id
+            client_id=self._identity_data.client_id
         )
         # TODO: User configurable with defaults
         self.mqtt.reconnect_delay_set(min_delay=1, max_delay=int(self.settings.connect_timeout_secs / 2 + 1))
         self.mqtt.tls_set(certfile=config.device_cert_path, keyfile=config.device_pkey_path,
                           ca_certs=config.server_ca_cert_path)
-        self.mqtt.username = self._mqtt_config.username
+        self.mqtt.username = self._identity_data.username
 
         self.mqtt.on_message = self._on_mqtt_message
         self.mqtt.on_connect = self._on_mqtt_connect
@@ -177,30 +292,23 @@ class Client:
 
         self.user_callbacks = callbacks or Callbacks()
 
+        self._kvs_client: Optional[KvsClient] = None
+        self._s3_client: Optional[S3Client] = None
+
+        try:
+            self._kvs_client = KvsClient(self._dra, self._identity_data)
+        except NotSupportedError:
+            pass
+
+        try:
+            self._s3_client = S3Client(self._dra, self._identity_data)
+        except NotSupportedError:
+            pass
+
     @classmethod
     def timestamp_now(cls) -> datetime:
         """ Returns the UTC timestamp that can be used to stamp telemetry records """
         return datetime.now(timezone.utc)
-
-    @property
-    def client_id(self) -> str:
-        """The MQTT client ID / IoT Thing name"""
-        return self._mqtt_config.client_id
-
-    @property
-    def kvs_enabled(self) -> bool:
-        """Whether Kinesis Video Streaming is enabled for this device"""
-        return self._mqtt_config.kvs.enabled
-
-    @property
-    def kvs_credential_endpoint(self) -> Optional[str]:
-        """The AWS credential endpoint URL for KVS"""
-        return self._mqtt_config.kvs.credential_endpoint
-
-    @property
-    def kvs_auto_start(self) -> bool:
-        """Whether KVS should auto-start on connection"""
-        return self._mqtt_config.kvs.auto_start
 
     def is_connected(self):
         return self.mqtt.is_connected()
@@ -228,7 +336,7 @@ class Client:
             try:
                 t = Timing()
                 mqtt_error = self.mqtt.connect(
-                    host=self._mqtt_config.host,
+                    host=self._identity_data.host,
                     port=8883
                 )
                 if mqtt_error != MQTTErrorCode.MQTT_ERR_SUCCESS:
@@ -246,14 +354,14 @@ class Client:
             except (SSLError, TimeoutError, OSError) as ex:
                 # OSError includes socket.gaierror when host could not be resolved
                 # This could also be temporary, so keep trying
-                print("Failed to connect to host %s. Exception: %s" % (self._mqtt_config.host, str(ex)))
+                print("Failed to connect to host %s. Exception: %s" % (self._identity_data.host, str(ex)))
 
             backoff_ms = random.randrange(1000, self.settings.connect_backoff_max_secs * 1000)
             print("Retrying connection... Backing off for %d ms." % backoff_ms)
             # Jitter back off a random number of milliseconds between 1 and 10 seconds.
             time.sleep(backoff_ms / 1000)
 
-        self.mqtt.subscribe(self._mqtt_config.topics.c2d, qos=1)
+        self.mqtt.subscribe(self._identity_data.topics.c2d, qos=1)
 
     def disconnect(self) -> MQTTErrorCode:
         ret = self.mqtt.disconnect()
@@ -306,7 +414,7 @@ class Client:
         else:
             packet = encode_telemetry_records(records)
             ret = self.mqtt.publish(
-                topic=self._mqtt_config.topics.rpt,
+                topic=self._identity_data.topics.rpt,
                 qos=1,
                 payload=packet
             )
@@ -390,13 +498,21 @@ class Client:
 
         packet = encode_c2d_ack(ack_id, message_type, status, message_str)
         ret = self.mqtt.publish(
-            topic=self._mqtt_config.topics.ack,
+            topic=self._identity_data.topics.ack,
             qos=1,
             payload=packet
         )
         if self.settings.verbose:
             print(">", packet)
         return ret
+
+    def get_duid(self) -> str:
+        """ Convenience method to get device unique ID """
+        return self.config.duid
+
+    def get_client_id(self) -> str:
+        """ Returns MQTT/Client ID (AWS Thing Name on AWS) """
+        return self._identity_data.client_id
 
     def _process_c2d_message(self, topic: str, payload: str) -> bool:
         # topic is ignored for now as we only subscribe to one
@@ -408,23 +524,18 @@ class Client:
             decoding_result = decode_c2d_message(payload)
             generic_message = decoding_result.generic_message
 
-            # Check for KVS-specific callbacks first (112, 113)
-            if generic_message.type == 112 and self.user_callbacks.start_stream_cb is not None:
-                if self.settings.verbose:
-                    print("Received start stream command")
-                self.user_callbacks.start_stream_cb()
-                return True
-            elif generic_message.type == 113 and self.user_callbacks.stop_stream_cb is not None:
-                if self.settings.verbose:
-                    print("Received stop stream command")
-                self.user_callbacks.stop_stream_cb()
-                return True
-
             # if the user wants to handle this message type, stop processing further
             generic_cb = self.user_callbacks.generic_message_callbacks.get(generic_message.type)
             if generic_cb is not None:
                 generic_cb(generic_message, decoding_result.raw_message)
                 return True
+
+            if self.user_callbacks.vs_cb is not None:
+                if generic_message.type in (C2dMessage.START_STREAM, C2dMessage.STOP_STREAM):
+                    print(f"Received {C2dMessage.TYPES.get(generic_message.type)}")
+                    self._kvs_client.is_streaming = generic_message.type == C2dMessage.START_STREAM
+                    self.user_callbacks.vs_cb(self._kvs_client)
+                    return True
 
             if decoding_result.command is not None:
                 #               TODO: Deal with runtime qualification
@@ -491,16 +602,16 @@ class Client:
         if len(command_args) >= 1:
             host = command_args[0]
             print("Starting AWS Device Qualification for", host)
-            self._mqtt_config.topics.rpt = 'qualification'
-            self._mqtt_config.topics.c2d = 'qualification'
-            self._mqtt_config.topics.ack = 'qualification'
-            self._mqtt_config.host = host
+            self._identity_data.topics.rpt = 'qualification'
+            self._identity_data.topics.c2d = 'qualification'
+            self._identity_data.topics.ack = 'qualification'
+            self._identity_data.host = host
             self.mqtt.on_log = log_callback
             self.disconnect()
             while True:
                 connected_time = Timing()
                 if not self.is_connected():
-                    print('(re)connecting to', self._mqtt_config.host)
+                    print('(re)connecting to', self._identity_data.host)
                     self.connect()
                     connected_time.reset(False)  # reset the timer
                 else:
@@ -516,12 +627,8 @@ class Client:
         else:
             print("Malformed AWS qualification command. Missing command argument!")
 
-    def get_aws_credentials(self, credential_endpoint: str = None) -> Optional[tuple]:
-        endpoint = credential_endpoint or self._mqtt_config.kvs.credential_endpoint
-        return self._dra.get_aws_credentials(
-            credential_endpoint=endpoint,
-            device_cert_path=self.config.device_cert_path,
-            device_pkey_path=self.config.device_pkey_path,
-            server_ca_cert_path=self.config.server_ca_cert_path,
-            thing_name=self._mqtt_config.client_id
-        )
+    def get_kvs_client(self) -> Optional[KvsClient]:
+        return self._kvs_client
+    
+    def get_s3_client(self) -> Optional[S3Client]:
+        return self._s3_client
