@@ -4,7 +4,6 @@
 import datetime
 import os
 import random
-import shutil
 import subprocess
 import sys
 import time
@@ -13,9 +12,10 @@ from typing import Optional
 
 from avnet.iotconnect.sdk.lite import Client, DeviceConfig, Callbacks, DeviceConfigError
 from avnet.iotconnect.sdk.lite import __version__ as SDK_VERSION
-from avnet.iotconnect.sdk.lite.client import KvsClient, S3Client, AwsCredentialsProvider
+from avnet.iotconnect.sdk.lite.client import KvsClient, AwsCredentialsProvider, S3Client
 
 kvs_client :Optional[KvsClient] = None
+s3_client :Optional[S3Client] = None
 
 def print_credentials(provider: AwsCredentialsProvider):
     """
@@ -24,9 +24,9 @@ def print_credentials(provider: AwsCredentialsProvider):
     """
     creds = provider.get_credentials()
     command = "set" if sys.platform.startswith('win') else "export"
-    print(f"{command} AWS_ACCESS_KEY_ID={creds.access_key_id}")
-    print(f"{command} AWS_SECRET_ACCESS_KEY={creds.secret_access_key}")
-    print(f"{command} AWS_SESSION_TOKEN=\"{creds.session_token}\"")
+    print(f'{command} AWS_ACCESS_KEY_ID={creds.access_key_id}')
+    print(f'{command} AWS_SECRET_ACCESS_KEY={creds.secret_access_key}')
+    print(f'{command} AWS_SESSION_TOKEN="{creds.session_token}"')
 
 def check_and_refresh_credentials(provider: AwsCredentialsProvider, what: str = ""):
     """
@@ -34,7 +34,7 @@ def check_and_refresh_credentials(provider: AwsCredentialsProvider, what: str = 
     """
     if provider.get_secs_to_expiry() < 60:
         print(f"Refreshing {what} credentials...")
-        kvs_client.obtain_credentials()
+        provider.obtain_credentials()
         print_credentials(provider)
 
 def on_video_streaming_event(kvsc: KvsClient):
@@ -43,10 +43,9 @@ def on_video_streaming_event(kvsc: KvsClient):
     Demonstrates how to ensure that credentials are refreshed.
     NOTE: the handle passed is the same as the kvs_client obtained from Client.get_kvs_client()
     """
-    print(f"KVS Video Streaming Status = {kvsc.is_streaming}")
-    if kvsc.is_streaming:
+    print(f"KVS Video Streaming Status = {kvsc.is_streaming()}")
+    if kvsc.is_streaming():
         check_and_refresh_credentials(kvsc, "KVS")
-
 
 def on_disconnect(reason: str, disconnected_from_server: bool):
     print("Disconnected%s. Reason: %s" % (" from server" if disconnected_from_server else "", reason))
@@ -57,7 +56,7 @@ def send_telemetry():
         'random': random.randint(0, 100)
     })
 
-def upload_file_example(file_name="my-file.jpg"):
+def upload_file_example(file_name="image.jpg"):
     bucket_name = None
     for bucket in s3_client.get_buckets():
         # the first bucket that's not customer owned should be the default bucket
@@ -71,19 +70,20 @@ def upload_file_example(file_name="my-file.jpg"):
     print("Account S3 Buckets:")
     print(s3_client.get_buckets())
     print("Example with AWS CLI:")
-    now = datetime.datetime.now(datetime.timezone.utc)
-    upload_file_key = f"{now.strftime('%Y/%m/%d')}/{str(uuid.uuid4())}-{file_name}"
-    device_upload_path = f"device-uploads/{c.get_duid()}"
-    cmd = f"aws s3 cp my-file.jpg s3://{bucket_name}/{device_upload_path}/{upload_file_key}"
+    today_date_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y/%m/%d')
+    file_guid_file_name = f"{str(uuid.uuid4())}-{file_name}"
+    cmd = f"aws s3 cp '{file_name}' 's3://{bucket_name}/device-uploads/{c.get_duid()}/{today_date_str}/{file_guid_file_name}' --content-type 'image/jpeg'"
     env = os.environ.copy()
     s3_client.get_credentials(env=env)
     print(f"Executing {cmd}...")
+
     try:
         subprocess.run(cmd, shell=True, check=True, env=env)
     except (subprocess.CalledProcessError, FileNotFoundError):
         print("Failed to execute command. Please ensure that AWS CLI is installed and that the file to upload is in the current directory.")
+
     c.send_telemetry({
-        'url': upload_file_key,
+        'url': f"{today_date_str}/{file_guid_file_name}",
         'cf': {
             'classification' : 'device-uploads',
         }
@@ -115,6 +115,7 @@ try:
         kvs_client.obtain_credentials()
         print("KVS credentials:")
         print_credentials(kvs_client)
+        print("Auto-start enabled", kvs_client.is_auto_start())
 
     if s3_client is None:
         print("S3 Client is not available. Make sure you enabled File Support in your device template.")

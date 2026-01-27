@@ -85,6 +85,7 @@ class DeviceConfig:
         )
         properties.validate()
         return properties
+
     def to_tls_credentials(self) -> DeviceTlsCredentials:
         return DeviceTlsCredentials(
             device_cert_path=self.device_cert_path,

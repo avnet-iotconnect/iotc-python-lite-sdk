@@ -11,9 +11,7 @@ from typing import Callable, Optional, List, Dict
 
 from avnet.iotconnect.sdk.sdklib.dra import DeviceRestApi, AwsCredentialsResponse, DeviceIdentityData
 from avnet.iotconnect.sdk.sdklib.error import C2DDecodeError, NotSupportedError
-from avnet.iotconnect.sdk.sdklib.mqtt import (C2dOta, C2dMessage, C2dCommand, C2dAck, TelemetryRecord,
-                                              TelemetryValueType,
-                                              encode_telemetry_records, encode_c2d_ack, decode_c2d_message)
+from avnet.iotconnect.sdk.sdklib.mqtt import C2dOta, C2dMessage, C2dCommand, C2dAck, TelemetryRecord, TelemetryValueType, encode_telemetry_records, encode_c2d_ack, decode_c2d_message
 from avnet.iotconnect.sdk.sdklib.util import Timing
 from paho.mqtt.client import CallbackAPIVersion, MQTTErrorCode, DisconnectFlags, MQTTMessageInfo
 from paho.mqtt.client import Client as PahoClient
@@ -70,10 +68,11 @@ class AwsCredentialsProvider:
         self.verbose = False
         self.credentials: Optional[AwsCredentialsResponse] = None
 
-    def obtain_credentials(self):
+    def obtain_credentials(self) -> AwsCredentialsResponse:
         if self.verbose and self.credentials is not None:
             print("Refreshing AWS credentials. Current expiry secs: %d" % self.get_seconds_until_credentials_expiry())
         self.credentials = self._dra.get_aws_credentials(credentials_endpoint=self.credentials_endpoint)
+        return self.credentials
 
     def get_secs_to_expiry(self) -> float:
         if self.credentials is None:
@@ -110,9 +109,6 @@ class AwsCredentialsProvider:
             env["AWS_SESSION_TOKEN"] = self.credentials.session_token
         return self.credentials
 
-    def get_seconds_until_credentials_expiry(self) -> float:
-        self.get_credentials() # trigger a refreh if needed
-        return (self.credentials.expiration - datetime.now(timezone.utc)).total_seconds()
 
 class KvsClient(AwsCredentialsProvider):
     def __init__(
@@ -133,8 +129,16 @@ class KvsClient(AwsCredentialsProvider):
 
         super().__init__(dra, self.identity_data.vs.url, verbose=verbose)
 
-        self.is_auto_start = self.identity_data.vs.as_
-        self.is_streaming = self.is_auto_start
+        self._is_auto_start = self.identity_data.vs.as_
+        self._is_streaming = self._is_auto_start
+
+    def is_auto_start(self) -> bool:
+        """ Indicates whether KVS streaming should be started automatically """
+        return self._is_auto_start
+
+    def is_streaming(self) -> bool:
+        """ Indicates whether KVS streaming should be started automatically """
+        return self._is_streaming
 
 
 @dataclass
@@ -143,14 +147,14 @@ class S3BucketInfo:
     is_customer_owned: bool = field(default=False)
     role_arn: str = field(default=None)
 
+
 class S3Client(AwsCredentialsProvider):
     """
     This class provides S3 access information for the device and a way to obtain AWS temporary credentials.
 
     When is_customer_owned for a bucket is True, role_arn will be need to be used to make an assume role request with
-    the credentials from AWsCredentialsProvider. Those new temporary credentials can then be used to access the actual S3 bucket.
-    Obtaining these temporary credentials is outside of scope of this SDK at the moment.
-
+    the credentials from AwsCredentialsProvider. Those new temporary credentials can then be used to access the actual S3 bucket.
+    Obtaining these customer bucket temporary credentials is outside of scope of this SDK at the moment.
     """
 
     def __init__(
@@ -281,8 +285,7 @@ class Client:
         )
         # TODO: User configurable with defaults
         self.mqtt.reconnect_delay_set(min_delay=1, max_delay=int(self.settings.connect_timeout_secs / 2 + 1))
-        self.mqtt.tls_set(certfile=config.device_cert_path, keyfile=config.device_pkey_path,
-                          ca_certs=config.server_ca_cert_path)
+        self.mqtt.tls_set(certfile=config.device_cert_path, keyfile=config.device_pkey_path, ca_certs=config.server_ca_cert_path)
         self.mqtt.username = self._identity_data.username
 
         self.mqtt.on_message = self._on_mqtt_message
@@ -295,6 +298,8 @@ class Client:
         self._kvs_client: Optional[KvsClient] = None
         self._s3_client: Optional[S3Client] = None
 
+        # If any of these are not available, then the template doesn't enable the features
+        # Most of the devices will not have those supported, so fail silently.
         try:
             self._kvs_client = KvsClient(self._dra, self._identity_data)
         except NotSupportedError:
@@ -442,7 +447,7 @@ class Client:
             original_command=original_message.command_name
         )
 
-    def send_ota_ack(self, original_message: C2dOta, status: int, message_str=None):
+    def send_ota_ack(self, original_message: C2dOta, status: int, message_str = None):
         """
         Send OTA acknowledgement.
         See the C2dAck comments for best practices with OTA download ACks.
@@ -461,8 +466,7 @@ class Client:
             message_str=message_str
         )
 
-    def send_ack(self, ack_id: str, message_type: int, status: int, message_str: str = None,
-                 original_command: str = None):
+    def send_ack(self, ack_id: str, message_type: int, status: int, message_str: str = None, original_command: str = None):
         """
         Send Command or OTA ack while having only ACK ID
 
@@ -480,21 +484,16 @@ class Client:
             print('Message NOT sent. Not connected!')
         elif ack_id is None or len(ack_id) == 0:
             if original_command is not None:
-                print(
-                    'Error: Message ACK ID missing. Ensure to set "Acknowledgement Required" in the template for command %s!' % original_command)
+                print('Error: Message ACK ID missing. Ensure to set "Acknowledgement Required" in the template for command %s!' % original_command)
             else:
-                print(
-                    'Error: Message ACK ID missing. Ensure to set "Acknowledgement Required" in the template the command!')
-            return
+                print('Error: Message ACK ID missing. Ensure to set "Acknowledgement Required" in the template the command!')
+            return None
         elif message_type not in (C2dMessage.COMMAND, C2dMessage.OTA):
-            print(
-                'Warning: Message type %d does not appear to be a valid message type!' % message_type)  # let it pass, just in case we can still somehow send different kind of ack
+            print('Warning: Message type %d does not appear to be a valid message type!' % message_type) # let it pass, just in case we can still somehow send different kind of ack
         elif message_type == C2dMessage.COMMAND and not C2dAck.is_valid_cmd_status(status):
-            print(
-                'Warning: Status %d does not appear to be a valid command ACK status!' % status)  # let it pass, just in case there is a new status
+            print('Warning: Status %d does not appear to be a valid command ACK status!' % status) # let it pass, just in case there is a new status
         elif message_type == C2dMessage.OTA and not C2dAck.is_valid_ota_status(status):
-            print(
-                'Warning: Status %d does not appear to be a valid OTA ACK status!' % status)  # let it pass, just in case there is a new status
+            print('Warning: Status %d does not appear to be a valid OTA ACK status!' % status) # let it pass, just in case there is a new status
 
         packet = encode_c2d_ack(ack_id, message_type, status, message_str)
         ret = self.mqtt.publish(
@@ -533,15 +532,15 @@ class Client:
             if self.user_callbacks.vs_cb is not None:
                 if generic_message.type in (C2dMessage.START_STREAM, C2dMessage.STOP_STREAM):
                     print(f"Received {C2dMessage.TYPES.get(generic_message.type)}")
-                    self._kvs_client.is_streaming = generic_message.type == C2dMessage.START_STREAM
+                    self._kvs_client._is_streaming = generic_message.type == C2dMessage.START_STREAM
                     self.user_callbacks.vs_cb(self._kvs_client)
                     return True
 
             if decoding_result.command is not None:
-                #               TODO: Deal with runtime qualification
-                #               if msg.command_name == 'aws-qualification-start':
-                #                    self._aws_qualification_start(msg.command_args)
-                #                elif self.user_callbacks.command_cb is not None:
+                # Potential way to deal with runtime qualification, but has issues.
+                # if msg.command_name == 'aws-qualification-start':
+                #     self._aws_qualification_start(msg.command_args)
+                # elif self.user_callbacks.command_cb is not None:
                 if self.user_callbacks.command_cb is not None:
                     self.user_callbacks.command_cb(decoding_result.command)
                 else:
@@ -554,18 +553,14 @@ class Client:
                     if self.settings.verbose:
                         print("WARN: Unhandled OTA request received!")
             elif generic_message.is_fatal:
-                print(
-                    "Received C2D message %s from backend. Device should stop operation." % generic_message.type_description)
+                print("Received C2D message %s from backend. Device should stop operation." % generic_message.type_description)
             elif generic_message.needs_refresh:
-                print(
-                    "Received C2D message %s from backend. Device should re-initialize the application." % generic_message.type_description)
+                print("Received C2D message %s from backend. Device should re-initialize the application." % generic_message.type_description)
             elif generic_message.heartbeat_operation is not None:
                 operation_str = "start" if generic_message.heartbeat_operation == True else "stop"
-                print("Received C2D message %s from backend. Device should %s heartbeat messages." % (
-                    generic_message.type_description, operation_str))
+                print("Received C2D message %s from backend. Device should %s heartbeat messages." % (generic_message.type_description, operation_str))
             else:
-                print("C2D Message parsing for message type %d is not supported by this client. Message was: %s" % (
-                    generic_message.ct, payload))
+                print("C2D Message parsing for message type %d is not supported by this client. Message was: %s" % (generic_message.ct, payload))
             return True
 
         except C2DDecodeError:
