@@ -1,18 +1,29 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2024 Avnet
 # Authors: Nikola Markovic <nikola.markovic@avnet.com> et al.
-import datetime
-import os
 import random
-import subprocess
 import sys
 import time
-import uuid
+from dataclasses import dataclass, field, asdict
 from typing import Optional
 
 from avnet.iotconnect.sdk.lite import Client, DeviceConfig, Callbacks, DeviceConfigError
 from avnet.iotconnect.sdk.lite import __version__ as SDK_VERSION
 from avnet.iotconnect.sdk.lite.client import KvsClient, AwsCredentialsProvider, S3Client
+
+
+@dataclass
+class ClassificationData:
+    """ Custom metadata that can be tied to S3 uploads in IoTConnect UI """
+    classification: Optional[str] = field(default=None)
+    confidence: Optional[float]  = field(default=None)
+
+@dataclass
+class S3CustomData:
+    """ Top level data structure for S3 uploads."""
+    cf: ClassificationData = field(default_factory=ClassificationData)
+
+s3_custom_data = S3CustomData()
 
 kvs_client :Optional[KvsClient] = None
 s3_client :Optional[S3Client] = None
@@ -23,15 +34,14 @@ def print_credentials(provider: AwsCredentialsProvider):
     so that aws cli and similar can be used.
     """
     creds = provider.get_credentials()
-    command = "set" if sys.platform.startswith('win') else "export"
+    # export for Linux with space so that it doesn't record in shell history when pasted
+    command = "set" if sys.platform.startswith('win') else " export"
     print(f'{command} AWS_ACCESS_KEY_ID={creds.access_key_id}')
     print(f'{command} AWS_SECRET_ACCESS_KEY={creds.secret_access_key}')
     print(f'{command} AWS_SESSION_TOKEN="{creds.session_token}"')
 
 def check_and_refresh_credentials(provider: AwsCredentialsProvider, what: str = ""):
-    """
-    Example function to check KVS or S3 credentials expiry and refresh if needed.
-    """
+    """ Example function to check KVS or S3 credentials expiry and refresh if needed."""
     if provider.get_secs_to_expiry() < 60:
         print(f"Refreshing {what} credentials...")
         provider.obtain_credentials()
@@ -56,39 +66,19 @@ def send_telemetry():
         'random': random.randint(0, 100)
     })
 
-def upload_file_example(file_name="image.jpg"):
-    bucket_name = None
-    for bucket in s3_client.get_buckets():
-        # the first bucket that's not customer owned should be the default bucket
-        # that can be used to upload files and show then in telemetry UI
-        if not bucket.is_customer_owned:
-            bucket_name = bucket.bucket_name
-    if bucket_name is None:
-        print("No suitable S3 bucket found for device uploads.")
-
-    print_credentials(s3_client)
+def upload_file_example(local_path="image.jpg"):
     print("Account S3 Buckets:")
     print(s3_client.get_buckets())
-    print("Example with AWS CLI:")
-    today_date_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y/%m/%d')
-    file_guid_file_name = f"{str(uuid.uuid4())}-{file_name}"
-    cmd = f"aws s3 cp '{file_name}' 's3://{bucket_name}/device-uploads/{c.get_duid()}/{today_date_str}/{file_guid_file_name}' --content-type 'image/jpeg'"
-    env = os.environ.copy()
-    s3_client.get_credentials(env=env)
-    print(f"Executing {cmd}...")
+    print("S3 Credentials:")
+    print_credentials(s3_client)
 
-    try:
-        subprocess.run(cmd, shell=True, check=True, env=env)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        print("Failed to execute command. Please ensure that AWS CLI is installed and that the file to upload is in the current directory.")
+    # Upload the file into the default bucket with some custom metadata
+    # The "cf" object is special and will be displayed by /IOTCONNECT UI
 
-    c.send_telemetry({
-        'url': f"{today_date_str}/{file_guid_file_name}",
-        'cf': {
-            'classification' : 'device-uploads',
-        }
-    })
+    s3_custom_data.cf.classification = "dog"
+    s3_custom_data.cf.confidence = random.randint(60, 100) / 100.0
 
+    c.s3_upload(local_path=local_path, custom_values=asdict(s3_custom_data))
 
 try:
     device_config = DeviceConfig.from_iotc_device_config_json_file(
@@ -122,7 +112,37 @@ try:
     else:
         print("S3 credentials as environment variables:")
         s3_client.obtain_credentials()
-        upload_file_example()
+        print_credentials(s3_client)
+        try:
+            import boto3 # Quick test to make sure aws-s3 extra is installed
+            upload_file_example()
+        except ImportError:
+            """
+            # We can export the variables into a shell that will execute aws cli commands to upload files. Example:
+            unix_timestamp = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
+            relative_upload_path = f"{unix_timestamp}-{file_name}"
+            cmd = f"aws s3 cp '{file_name}' 's3://{bucket_name}/device-uploads/{c.get_duid()}/{relative_upload_path}'"
+            env = os.environ.copy()
+            s3_client.get_credentials(env=env)
+            print(f"Executing {cmd}...")
+        
+            try:
+                subprocess.run(cmd, shell=True, check=True, env=env)
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                print("Failed to execute command. Please ensure that AWS CLI is installed and that the file to upload is in the current directory.")
+        
+            c.send_file_upload_message(relative_upload_path, {
+                'cf': {
+                    'classification': 'yorkie',
+                    'confidence': 0.700,
+                }
+            })
+            """
+            print("AWS S3 support is not installed.")
+            print("Install this package with pip install iotconnect-sdk-lite[aws-s3]")
+            print("Or set the printed variables in your shell and use aws cli to upload files.")
+            print("Then invoke c.send_s3_file_telemetry(...) to notify /IOTCONNECT about the uploaded file.")
+
 
     while True:
         if not c.is_connected():

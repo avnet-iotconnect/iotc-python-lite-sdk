@@ -7,10 +7,10 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from ssl import SSLError
-from typing import Callable, Optional, List, Dict
+from typing import Callable, Optional, List, Dict, TYPE_CHECKING
 
 from avnet.iotconnect.sdk.sdklib.dra import DeviceRestApi, AwsCredentialsResponse, DeviceIdentityData
-from avnet.iotconnect.sdk.sdklib.error import C2DDecodeError, NotSupportedError
+from avnet.iotconnect.sdk.sdklib.error import C2DDecodeError, NotSupportedError, ClientError
 from avnet.iotconnect.sdk.sdklib.mqtt import C2dOta, C2dMessage, C2dCommand, C2dAck, TelemetryRecord, TelemetryValueType, encode_telemetry_records, encode_c2d_ack, decode_c2d_message
 from avnet.iotconnect.sdk.sdklib.util import Timing
 from paho.mqtt.client import CallbackAPIVersion, MQTTErrorCode, DisconnectFlags, MQTTMessageInfo
@@ -19,6 +19,15 @@ from paho.mqtt.reasoncodes import ReasonCode
 
 from .config import DeviceConfig
 
+if TYPE_CHECKING:
+    import boto3
+    from mypy_boto3_sts import STSClient
+    from botocore.exceptions import BotoCoreError
+else:
+    try:
+        import boto3
+    except ImportError:
+        boto3 = None
 
 class Callbacks:
     def __init__(
@@ -70,7 +79,7 @@ class AwsCredentialsProvider:
 
     def obtain_credentials(self) -> AwsCredentialsResponse:
         if self.verbose and self.credentials is not None:
-            print("Refreshing AWS credentials. Current expiry secs: %d" % self.get_seconds_until_credentials_expiry())
+            print("Refreshing AWS credentials. Current expiry secs: %d" % self.get_secs_to_expiry())
         self.credentials = self._dra.get_aws_credentials(credentials_endpoint=self.credentials_endpoint)
         return self.credentials
 
@@ -177,6 +186,90 @@ class S3Client(AwsCredentialsProvider):
     def get_buckets(self) -> List[S3BucketInfo]:
         return self.buckets
 
+    def get_default_bucket(self) -> S3BucketInfo:
+        """
+        Returns the first non-customer owned bucket that should be used for device uploads.
+        Otherwise, returns the first bucket available.
+        Normally there should be at least one bucket that is not customer-owned,
+        but if "Sagemaker Support" is enabled in your account settings, you will get customer owned bucket
+        In this case we return the first bucket.
+        """
+        first_bucket = None
+        for bucket in self.get_buckets():
+            if first_bucket is None:
+                first_bucket = bucket
+            # the first bucket that's not customer owned should be the default bucket
+            # that can be used to upload files and show then in telemetry UI
+            if not bucket.is_customer_owned:
+                return bucket
+        return first_bucket # or nothing if none available
+
+    def upload_to_bucket(self, local_path: str, bucket_path: str, bucket: Optional[S3BucketInfo] = None):
+        """
+        Upload a file to S3 using the device's S3 credentials.
+
+        :param local_path: Path to the local file to upload.
+        :param bucket_path: (Optional) Full object path (Key) in the S3 bucket where the file will be uploaded.
+            If not provided, the file will be uploaded to the root of the bucket with the same file name as local_path with prepended epoch timestamp.
+        :param bucket: (Optional) S3BucketInfo object representing the bucket to upload to.
+            If not provided, the first non-customer owned bucket will be used. Otherwise, the first bucket will be used.
+        """
+        if boto3 is None:
+            raise NotSupportedError("S3: Optional package is required. Install this package with pip3 install iotconnect-lite-sdk[aws-s3]")
+
+        if bucket is None:
+            # will raise if no suitable bucket found
+            bucket = self.get_default_bucket()
+            if bucket is None:
+                raise ClientError("No S3 bucket available for file uploads")
+
+        creds = self.get_credentials(refresh_if_secs_to_expiry=60)
+        if creds is None:
+            # will raise if unable to obtain new credentials
+            creds = self.obtain_credentials()
+
+        if bucket.is_customer_owned:
+            # do STS assume role with rarn here to obtain new credentials for the customer bucket
+            # the type import and forward declaration is only for type checking
+            try:
+                sts_client: 'STSClient' = boto3.client(
+                    'sts',
+                    aws_access_key_id=creds.access_key_id,
+                    aws_secret_access_key=creds.secret_access_key,
+                    aws_session_token=creds.session_token
+                )
+                assumed_role = sts_client.assume_role(
+                    RoleArn=bucket.role_arn,
+                    RoleSessionName="iotconnect-lite-sdk-s3-upload-" + self.identity_data.client_id + "-" + str(int(time.time()))
+                )
+                creds = AwsCredentialsResponse(
+                    access_key_id=assumed_role['Credentials']['AccessKeyId'],
+                    secret_access_key=assumed_role['Credentials']['SecretAccessKey'],
+                    session_token=assumed_role['Credentials']['SessionToken'],
+                    expiration_str= assumed_role['Credentials']['Expiration'].isoformat()
+                )
+            except BotoCoreError as e:
+                raise ClientError(f"Failed to assume role {bucket.role_arn}")
+        try:
+            s3 = boto3.client(
+                's3',
+                aws_access_key_id=creds.access_key_id,
+                aws_secret_access_key=creds.secret_access_key,
+                aws_session_token=creds.session_token
+            )
+        except BotoCoreError as e:
+            raise ClientError("Failed to create S3 client: " + str(e))
+
+        try:
+            s3.upload_file(
+                Filename=local_path,
+                Bucket=bucket.bucket_name,
+                Key=bucket_path
+            )
+            if self.verbose:
+                print(f"File {local_path} uploaded to bucket {bucket.bucket_name}")
+        except BotoCoreError as e:
+            raise ClientError(f"Failed to upload file to S3: {str(e)}")
 
 class ClientSettings:
     """ Optional settings that the user can use to control the client MQTT connection behavior"""
@@ -427,6 +520,103 @@ class Client:
                 print(">", packet)
             return ret
 
+    def s3_upload(self, local_path: str, custom_values: Optional[dict[str, TelemetryValueType]] = None, relative_upload_path: Optional[str] = None):
+        """
+        Upload a file into the default file upload bucket send a telemetry message with the file URL.
+
+        This method is intended for general use. Use other provided methods if you need more control.
+
+        :param local_path: Path to the local file to upload.
+        :param custom_values: (Optional) Additional telemetry values to send along with the file URL.
+            Do not populate the "url" field in it. The field is reserved.
+            If you populate the "cf" key, the values will appear in /IOTCONNECT Telemetry Files
+            The web UI recognize the file type and show it appropriately.
+            Example:
+                'cf': {
+                    'class': 'dog',
+                    'confidence': 0.700,
+                }
+            or just:
+                'cf': 'dog'
+        :param relative_upload_path: Sub-path in the S3 bucket where the file will be uploaded.
+            This path should not contain the 'device-uploads/<DUID>', but have only the relative path after that.
+        """
+        if boto3 is None:
+            raise NotSupportedError("S3: Optional package is required. Install this package with pip3 install iotconnect-lite-sdk[aws-s3]")
+        if self._s3_client is None:
+            raise NotSupportedError("FS support is not enabled for this device. Please ensure to enable it in the device template")
+
+        bucket = self._s3_client.get_default_bucket()
+        if bucket is None:
+            raise ClientError("No S3 bucket available for file uploads")
+
+        if relative_upload_path is None or len(relative_upload_path) == 0:
+            file_name = local_path.split("/")[-1]
+            unix_timestamp = int(datetime.now(timezone.utc).timestamp())
+            relative_upload_path = f"{unix_timestamp}-{file_name}"
+
+        self._s3_client.upload_to_bucket(local_path, f"device-uploads/{self.get_duid()}/{relative_upload_path}", bucket)
+
+        self.send_file_upload_message(
+            relative_file_upload_path=f"{relative_upload_path}",
+            custom_values=custom_values
+        )
+
+    def send_file_upload_message(self, relative_file_upload_path: str, custom_values: Optional[dict[str, TelemetryValueType]] = None):
+        """
+        Send a file upload MQTT message indicating that a file has been uploaded to the device's S3 bucket.
+
+        :param relative_file_upload_path: The relative path in the device-uploads S3 bucket where the file was uploaded.
+            This path should not contain the 'device-uploads/<DUID>', but have only the relative path after that.
+        :param custom_values: (Optional) Additional telemetry values to send along with the file URL.
+            Do not populate the "url" field in it. The field is reserved.
+            If you populate the "cf" key, the values will appear in /IOTCONNECT Telemetry Files
+            The web UI recognize the file type and show it appropriately.
+            Example:
+                'cf': {
+                    'class': 'dog',
+                    'confidence': 0.700,
+                }
+            or just:
+                'cf': 'dog'
+        """
+        if relative_file_upload_path is None or len(relative_file_upload_path) == 0:
+            raise ValueError("relative_file_upload_path cannot be empty")
+
+        # the custom values really become the top level telemetry record
+        # with "url" added to it as a special field
+        if custom_values is None:
+            record = dict[str, TelemetryValueType]()
+        else:
+            record = custom_values
+
+        # validate file path to make sure the user did not make some mistake
+        # but only if verbose is enabled?... Maybe the user intended it?
+        if self.settings.verbose:
+            if "device-uploads" in relative_file_upload_path:
+                print("Warning: The 'device_uploads' prefix should not generally be included in the relative_file_upload_path")
+            if self.get_duid() in relative_file_upload_path:
+                print("Warning: relative_file_upload_path should not generally contain the device unique ID (DUID)")
+
+        # url goes at top level:
+        if record.get("url") is not None:
+            raise ValueError("The 'url' key is reserved and cannot be used in custom_values")
+        record["url"] = relative_file_upload_path
+        records = [TelemetryRecord(record)]
+        if not self.is_connected():
+            print('Message NOT sent. Not connected!')
+            return None
+        else:
+            packet = encode_telemetry_records(records)
+            ret = self.mqtt.publish(
+                topic=self._identity_data.topics.fu,
+                qos=1,
+                payload=packet
+            )
+            if self.settings.verbose:
+                print("file: >", packet)
+            return ret
+
     def send_command_ack(self, original_message: C2dCommand, status: int, message_str=None):
         """
         Send Command acknowledgement.
@@ -512,6 +702,7 @@ class Client:
     def get_client_id(self) -> str:
         """ Returns MQTT/Client ID (AWS Thing Name on AWS) """
         return self._identity_data.client_id
+
 
     def _process_c2d_message(self, topic: str, payload: str) -> bool:
         # topic is ignored for now as we only subscribe to one

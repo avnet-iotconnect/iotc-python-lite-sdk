@@ -43,6 +43,15 @@ dependencies = [
     "paho-mqtt>=2.1.0",
 ]
 
+[project.optional-dependencies]
+aws-s3 = [
+    "boto3>=1.26.0"
+]
+dev = [
+    "iotconnect-sdk-lite",
+    "boto3-stubs[sts,s3]"
+]
+
 [project.urls]
 Homepage = "https://github.com/avnet-iotconnect/iotc-python-lite-sdk"
 
