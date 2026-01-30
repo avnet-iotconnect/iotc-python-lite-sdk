@@ -6,6 +6,7 @@ import random
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from ssl import SSLError
 from typing import Callable, Optional, List, Dict, TYPE_CHECKING
 
@@ -526,6 +527,8 @@ class Client:
 
         This method is intended for general use. Use other provided methods if you need more control.
 
+        This will call S3Client.upload_to_bucket() and then send_file_upload_message().
+
         :param local_path: Path to the local file to upload.
         :param custom_values: (Optional) Additional telemetry values to send along with the file URL.
             Do not populate the "url" field in it. The field is reserved.
@@ -551,7 +554,7 @@ class Client:
             raise ClientError("No S3 bucket available for file uploads")
 
         if relative_upload_path is None or len(relative_upload_path) == 0:
-            file_name = local_path.split("/")[-1]
+            file_name = Path(local_path).name
             unix_timestamp = int(datetime.now(timezone.utc).timestamp())
             relative_upload_path = f"{unix_timestamp}-{file_name}"
 
@@ -565,12 +568,13 @@ class Client:
     def send_file_upload_message(self, relative_file_upload_path: str, custom_values: Optional[dict[str, TelemetryValueType]] = None):
         """
         Send a file upload MQTT message indicating that a file has been uploaded to the device's S3 bucket.
+        The Telemetry Files tab in the /IOTCONNECT web UI will show the uploaded file accordingly.
 
         :param relative_file_upload_path: The relative path in the device-uploads S3 bucket where the file was uploaded.
             This path should not contain the 'device-uploads/<DUID>', but have only the relative path after that.
         :param custom_values: (Optional) Additional telemetry values to send along with the file URL.
             Do not populate the "url" field in it. The field is reserved.
-            If you populate the "cf" key, the values will appear in /IOTCONNECT Telemetry Files
+            If you populate the "cf" key as value or object, the values will appear in /IOTCONNECT Telemetry Files
             The web UI recognize the file type and show it appropriately.
             Example:
                 'cf': {
@@ -592,15 +596,14 @@ class Client:
 
         # validate file path to make sure the user did not make some mistake
         # but only if verbose is enabled?... Maybe the user intended it?
-        if self.settings.verbose:
-            if "device-uploads" in relative_file_upload_path:
-                print("Warning: The 'device_uploads' prefix should not generally be included in the relative_file_upload_path")
-            if self.get_duid() in relative_file_upload_path:
-                print("Warning: relative_file_upload_path should not generally contain the device unique ID (DUID)")
+        if "device-uploads" in relative_file_upload_path:
+            print("Warning: The 'device_uploads' prefix should not generally be included in the relative_file_upload_path")
+        if self.get_duid() in relative_file_upload_path:
+            print("Warning: relative_file_upload_path should not generally contain the device unique ID (DUID)")
 
         # url goes at top level:
         if record.get("url") is not None:
-            raise ValueError("The 'url' key is reserved and cannot be used in custom_values")
+            raise ValueError("The 'url' key in custom_values is reserved and cannot be used in custom_values")
         record["url"] = relative_file_upload_path
         records = [TelemetryRecord(record)]
         if not self.is_connected():
