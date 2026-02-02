@@ -542,12 +542,12 @@ class Client:
             or just:
                 'cf': 'dog'
         :param relative_upload_path: Sub-path in the S3 bucket where the file will be uploaded.
-            This path should not contain the 'device-uploads/<DUID>', but have only the relative path after that.
+            This path should not contain the 'device-uploads/<client_id>' (thing name), but have only the relative path after that.
         """
         if boto3 is None:
             raise NotSupportedError("S3: Optional package is required. Install this package with pip3 install iotconnect-lite-sdk[aws-s3]")
         if self._s3_client is None:
-            raise NotSupportedError("FS support is not enabled for this device. Please ensure to enable it in the device template")
+            raise NotSupportedError("FS support is not enabled for this device. Please ensure to enable it in the device template or ensure to re-create the device after enabling it.")
 
         bucket = self._s3_client.get_default_bucket()
         if bucket is None:
@@ -558,7 +558,7 @@ class Client:
             unix_timestamp = int(datetime.now(timezone.utc).timestamp())
             relative_upload_path = f"{unix_timestamp}-{file_name}"
 
-        self._s3_client.upload_to_bucket(local_path, f"device-uploads/{self.get_duid()}/{relative_upload_path}", bucket)
+        self._s3_client.upload_to_bucket(local_path, f"device-uploads/{self.get_client_id()}/{relative_upload_path}", bucket)
 
         self.send_file_upload_message(
             relative_file_upload_path=f"{relative_upload_path}",
@@ -571,7 +571,7 @@ class Client:
         The Telemetry Files tab in the /IOTCONNECT web UI will show the uploaded file accordingly.
 
         :param relative_file_upload_path: The relative path in the device-uploads S3 bucket where the file was uploaded.
-            This path should not contain the 'device-uploads/<DUID>', but have only the relative path after that.
+            This path should not contain the 'device-uploads/<client_id>' (thing name), but have only the relative path after that.
         :param custom_values: (Optional) Additional telemetry values to send along with the file URL.
             Do not populate the "url" field in it. The field is reserved.
             If you populate the "cf" key as value or object, the values will appear in /IOTCONNECT Telemetry Files

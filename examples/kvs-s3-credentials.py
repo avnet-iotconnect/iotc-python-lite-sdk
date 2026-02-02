@@ -55,7 +55,11 @@ def on_video_streaming_event(kvsc: KvsClient):
     """
     print(f"KVS Video Streaming Status = {kvsc.is_streaming()}")
     if kvsc.is_streaming():
-        check_and_refresh_credentials(kvsc, "KVS")
+        # make sure to try/catch here to avoid mqtt callback thread crashing and stopping MQTT processing
+        try:
+            check_and_refresh_credentials(kvsc, "KVS")
+        except Exception as e:
+            print("Failed to refresh KVS credentials:", e)
 
 def on_disconnect(reason: str, disconnected_from_server: bool):
     print("Disconnected%s. Reason: %s" % (" from server" if disconnected_from_server else "", reason))
