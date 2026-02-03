@@ -1,16 +1,17 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2024 Avnet
 # Authors: Nikola Markovic <nikola.markovic@avnet.com> et al.
+
 import random
 import sys
 import time
 from dataclasses import dataclass, field, asdict
+from pathlib import Path
 from typing import Optional
 
 from avnet.iotconnect.sdk.lite import Client, DeviceConfig, Callbacks, DeviceConfigError
 from avnet.iotconnect.sdk.lite import __version__ as SDK_VERSION
 from avnet.iotconnect.sdk.lite.client import KvsClient, AwsCredentialsProvider, S3Client
-
 
 @dataclass
 class ClassificationData:
@@ -70,7 +71,7 @@ def send_telemetry():
         'random': random.randint(0, 100)
     })
 
-def upload_file_example(local_path="image.jpg"):
+def upload_file_example(local_path: str = Path(__file__).parent / '../files/sample-s3-upload-image.jpg'):
     print("Account S3 Buckets:")
     print(s3_client.get_buckets())
     print("S3 Credentials:")
@@ -78,7 +79,6 @@ def upload_file_example(local_path="image.jpg"):
 
     # Upload the file into the default bucket with some custom metadata
     # The "cf" object is special and will be displayed by /IOTCONNECT UI
-
     s3_custom_data.cf.classification = "dog"
     s3_custom_data.cf.confidence = random.randint(60, 100) / 100.0
 

@@ -377,7 +377,7 @@ class Client:
             callback_api_version=CallbackAPIVersion.VERSION2,
             client_id=self._identity_data.client_id
         )
-        # TODO: User configurable with defaults
+        # Investigate if we need to make this configurable:
         self.mqtt.reconnect_delay_set(min_delay=1, max_delay=int(self.settings.connect_timeout_secs / 2 + 1))
         self.mqtt.tls_set(certfile=config.device_cert_path, keyfile=config.device_pkey_path, ca_certs=config.server_ca_cert_path)
         self.mqtt.username = self._identity_data.username
