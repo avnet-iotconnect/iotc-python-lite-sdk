@@ -43,7 +43,8 @@ def print_credentials(provider: AwsCredentialsProvider):
 
 def check_and_refresh_credentials(provider: AwsCredentialsProvider, what: str = ""):
     """ Example function to check KVS or S3 credentials expiry and refresh if needed."""
-    if provider.get_secs_to_expiry() < 60:
+    # If provider is none, we already printed a message that the client is not available
+    if provider is not None and  provider.get_secs_to_expiry() < 60:
         print(f"Refreshing {what} credentials...")
         provider.obtain_credentials()
         print_credentials(provider)
