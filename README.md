@@ -36,3 +36,23 @@ Using this client to communicate to /IOTCONNECT involves the following steps:
 - Optionally, pass a callback for the MQTT disconnect event and handle it according to your application requirements.  
 - Call Client.connect(). The call should block until connected based on timeout retry settings.
 - Call Client.send_telemetry() at regular intervals. Verify that the client is connected with Client.is_connected()
+
+# Development and Testing
+
+Please ensure to review the [CONTRIBUTING.md](CONTRIBUTING.md) document for detailed guidelines before making changes to the project.
+
+To set up for development:
+- Ensure to use a modern IDE like PYCharm Community Edition or VSCode so that typing hints
+    will be properly recognized. This will ensure that problems are caught early or typing issues
+    are not causing a burden for future development.
+- Clone this repository locally.
+- Create a new development branch.
+- Install the local repo as editable package with development dependencies:
+```bash
+pip3 install -e .[dev]
+```
+- If needing to make changes to the iotc-python-sdk-lib, clone that repository as well and install it as editable package:
+```bash
+pip3 install -e path/to/iotc-python-sdk-lib
+```
+- When done with changes, submit a pull request for this and/or the iotc-python-sdk-lib repository as needed.
