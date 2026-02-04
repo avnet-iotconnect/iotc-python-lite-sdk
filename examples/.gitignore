@@ -4,3 +4,4 @@
 # ignore any certificate or private key files that may be dropped here for testing
 *.pem
 *.crt
+*.jpg

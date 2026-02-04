@@ -39,8 +39,17 @@ classifiers = [
     "Topic :: Internet",
 ]
 dependencies = [
-    "iotconnect-lib<2.0.0",
+    "iotconnect-lib>=2.0.0,<3.0.0",
     "paho-mqtt>=2.1.0",
+]
+
+[project.optional-dependencies]
+aws-s3 = [
+    "boto3>=1.42.41"
+]
+dev = [
+    "iotconnect-sdk-lite[aws-s3]",
+    "boto3-stubs[sts,s3]"
 ]
 
 [project.urls]

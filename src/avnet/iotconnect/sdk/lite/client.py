@@ -1,15 +1,17 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2024 Avnet
-# Authors: Nikola Markovic <nikola.markovic@avnet.com> et al.
+# Authors: Nikola Markovic <nikola.markovic@avnet.com> and Zackary Andraka <zackary.andraka@avnet.com> et al.
 
 import random
 import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from ssl import SSLError
-from typing import Callable, Optional
+from typing import Callable, Optional, List, Dict, TYPE_CHECKING
 
-from avnet.iotconnect.sdk.sdklib.dra import DeviceRestApi
-from avnet.iotconnect.sdk.sdklib.error import C2DDecodeError
+from avnet.iotconnect.sdk.sdklib.dra import DeviceRestApi, AwsCredentialsResponse, DeviceIdentityData
+from avnet.iotconnect.sdk.sdklib.error import C2DDecodeError, NotSupportedError, ClientError
 from avnet.iotconnect.sdk.sdklib.mqtt import C2dOta, C2dMessage, C2dCommand, C2dAck, TelemetryRecord, TelemetryValueType, encode_telemetry_records, encode_c2d_ack, decode_c2d_message
 from avnet.iotconnect.sdk.sdklib.util import Timing
 from paho.mqtt.client import CallbackAPIVersion, MQTTErrorCode, DisconnectFlags, MQTTMessageInfo
@@ -18,6 +20,15 @@ from paho.mqtt.reasoncodes import ReasonCode
 
 from .config import DeviceConfig
 
+if TYPE_CHECKING:
+    import boto3
+    from mypy_boto3_sts import STSClient
+    from botocore.exceptions import BotoCoreError
+else:
+    try:
+        import boto3
+    except ImportError:
+        boto3 = None
 
 class Callbacks:
     def __init__(
@@ -25,10 +36,11 @@ class Callbacks:
             command_cb: Optional[Callable[[C2dCommand], None]] = None,
             ota_cb: Optional[Callable[[C2dOta], None]] = None,
             disconnected_cb: Optional[Callable[[str, bool], None]] = None,
-            generic_message_callbacks: dict [int, Callable[[C2dMessage, dict], None]]= None
+            generic_message_callbacks: dict[int, Callable[[C2dMessage, dict], None]] = None,
+            vs_cb: Optional[Callable[['KvsClient'], None]] = None
     ):
         """
-        Specify callbacks for C2D command, OTA (not implemented yet) or MQTT disconnection.
+        Specify callbacks for C2D command, OTA, Video Streaming or MQTT disconnection.
 
         :param command_cb: Callback function with first parameter being C2dCommand object.
             Use this callback to process commands sent by the back end.
@@ -41,13 +53,224 @@ class Callbacks:
             Use this callback to asynchronously react to the back end disconnection event rather than polling Client.is_connected.
 
         :param generic_message_callbacks: A dictionary of callbacks indexed by the message type.
+
+        :param vs_cb: Callback function for video streaming related events.
         """
 
         self.disconnected_cb = disconnected_cb
         self.command_cb = command_cb
         self.ota_cb = ota_cb
-        self.generic_message_callbacks = generic_message_callbacks or dict[int, C2dMessage]() # empty dict otherwise
+        self.generic_message_callbacks = generic_message_callbacks or dict[int, C2dMessage]()
+        self.vs_cb = vs_cb
 
+class AwsCredentialsProvider:
+    def __init__(self, dra: DeviceRestApi, credentials_endpoint: str, verbose: bool = False):
+        """
+        This class provides a way to obtain and refresh AWS temporary credentials.
+
+        If auto_obtain is set to True, the first call to get_credentials() will automatically
+        obtain the credentials if they are not already obtained.
+
+        If refresh_before_expiry_secs is set, get_credentials() will be refrsh accordingly.
+        """
+        self._dra = dra
+        self.credentials_endpoint = credentials_endpoint
+        self.verbose = False
+        self.credentials: Optional[AwsCredentialsResponse] = None
+
+    def obtain_credentials(self) -> AwsCredentialsResponse:
+        if self.verbose and self.credentials is not None:
+            print("Refreshing AWS credentials. Current expiry secs: %d" % self.get_secs_to_expiry())
+        self.credentials = self._dra.get_aws_credentials(credentials_endpoint=self.credentials_endpoint)
+        return self.credentials
+
+    def get_secs_to_expiry(self) -> float:
+        if self.credentials is None:
+            return 0.0
+        delta = self.credentials.expiration - datetime.now(timezone.utc)
+        return delta.total_seconds()
+
+
+    def get_credentials(self, refresh_if_secs_to_expiry: Optional[int] = None, env: Optional[Dict[str, str]] = None) -> Optional[AwsCredentialsResponse]:
+        """
+        Returns the current AWS temporary credentials or NONE if they expired.
+
+        If refresh_if_secs_to_expiry is provided current credentials will be refreshed if they are expired.
+
+        If env dictionary is provided, the AWS credentials will be set in the dictionary. This can be
+        useful when invoking shell commands.
+        """
+        if self.credentials is None:
+            return None
+
+        if refresh_if_secs_to_expiry is not None:
+            if self.get_secs_to_expiry() < refresh_if_secs_to_expiry:
+                print("Refreshing AWS credentials before expiry.")
+                return self.obtain_credentials()
+
+        if self.get_secs_to_expiry() <= 0:
+            if self.verbose:
+                print("AWS credentials have expired.")
+            return None
+
+        if env is not None:
+            env["AWS_ACCESS_KEY_ID"] = self.credentials.access_key_id
+            env["AWS_SECRET_ACCESS_KEY"] = self.credentials.secret_access_key
+            env["AWS_SESSION_TOKEN"] = self.credentials.session_token
+        return self.credentials
+
+
+class KvsClient(AwsCredentialsProvider):
+    def __init__(
+            self,
+            dra: DeviceRestApi,
+            identity_data: DeviceIdentityData,
+            verbose: bool = False
+    ):
+        """
+        This class provides KVS-related information for the device and a way to obtain AWS temporary credentials.
+
+        The auto_start property indicates whether KVS streaming should be started automatically.
+        the is_streaming property indicates the current desired status of KVS streaming.
+        """
+        self.identity_data = identity_data
+        if not self.identity_data.vs or not self.identity_data.vs.url:
+            raise NotSupportedError("KVS is not enabled for this device")
+
+        super().__init__(dra, self.identity_data.vs.url, verbose=verbose)
+
+        self._is_auto_start = self.identity_data.vs.as_
+        self._is_streaming = self._is_auto_start
+
+    def is_auto_start(self) -> bool:
+        """ Indicates whether KVS streaming should be started automatically """
+        return self._is_auto_start
+
+    def is_streaming(self) -> bool:
+        """ Indicates whether KVS streaming should be started automatically """
+        return self._is_streaming
+
+
+@dataclass
+class S3BucketInfo:
+    bucket_name: str = field(default=None)
+    is_customer_owned: bool = field(default=False)
+    role_arn: str = field(default=None)
+
+
+class S3Client(AwsCredentialsProvider):
+    """
+    This class provides S3 access information for the device and a way to obtain AWS temporary credentials.
+
+    When is_customer_owned for a bucket is True, role_arn will be need to be used to make an assume role request with
+    the credentials from AwsCredentialsProvider. Those new temporary credentials can then be used to access the actual S3 bucket.
+    Obtaining these customer bucket temporary credentials is outside of scope of this SDK at the moment.
+    """
+
+    def __init__(
+            self,
+            dra: DeviceRestApi,
+            identity_data: DeviceIdentityData
+    ):
+        self.identity_data = identity_data
+        if not self.identity_data.filesystem or not self.identity_data.filesystem.url:
+            raise NotSupportedError("Filesystem (S3) support is not enabled for this device")
+
+        super().__init__(dra, self.identity_data.filesystem.url)
+
+        self.buckets = []
+        self.buckets = [
+            S3BucketInfo(bucket_name=bucket.bn,is_customer_owned=bucket.ca,role_arn=bucket.rarn)
+            for bucket in self.identity_data.filesystem.buckets
+        ]
+
+    def get_buckets(self) -> List[S3BucketInfo]:
+        return self.buckets
+
+    def get_default_bucket(self) -> S3BucketInfo:
+        """
+        Returns the first non-customer owned bucket that should be used for device uploads.
+        Otherwise, returns the first bucket available.
+        Normally there should be at least one bucket that is not customer-owned,
+        but if "Sagemaker Support" is enabled in your account settings, you will get customer owned bucket
+        In this case we return the first bucket.
+        """
+        first_bucket = None
+        for bucket in self.get_buckets():
+            if first_bucket is None:
+                first_bucket = bucket
+            # the first bucket that's not customer owned should be the default bucket
+            # that can be used to upload files and show then in telemetry UI
+            if not bucket.is_customer_owned:
+                return bucket
+        return first_bucket # or nothing if none available
+
+    def upload_to_bucket(self, local_path: str, bucket_path: str, bucket: Optional[S3BucketInfo] = None):
+        """
+        Upload a file to S3 using the device's S3 credentials.
+
+        :param local_path: Path to the local file to upload.
+        :param bucket_path: (Optional) Full object path (Key) in the S3 bucket where the file will be uploaded.
+            If not provided, the file will be uploaded to the root of the bucket with the same file name as local_path with prepended epoch timestamp.
+        :param bucket: (Optional) S3BucketInfo object representing the bucket to upload to.
+            If not provided, the first non-customer owned bucket will be used. Otherwise, the first bucket will be used.
+        """
+        if boto3 is None:
+            raise NotSupportedError("S3: Optional package is required. Install this package with pip3 install iotconnect-lite-sdk[aws-s3]")
+
+        if bucket is None:
+            # will raise if no suitable bucket found
+            bucket = self.get_default_bucket()
+            if bucket is None:
+                raise ClientError("No S3 bucket available for file uploads")
+
+        creds = self.get_credentials(refresh_if_secs_to_expiry=60)
+        if creds is None:
+            # will raise if unable to obtain new credentials
+            creds = self.obtain_credentials()
+
+        if bucket.is_customer_owned:
+            # do STS assume role with rarn here to obtain new credentials for the customer bucket
+            # the type import and forward declaration is only for type checking
+            try:
+                sts_client: 'STSClient' = boto3.client(
+                    'sts',
+                    aws_access_key_id=creds.access_key_id,
+                    aws_secret_access_key=creds.secret_access_key,
+                    aws_session_token=creds.session_token
+                )
+                assumed_role = sts_client.assume_role(
+                    RoleArn=bucket.role_arn,
+                    RoleSessionName="iotconnect-lite-sdk-s3-upload-" + self.identity_data.client_id + "-" + str(int(time.time()))
+                )
+                creds = AwsCredentialsResponse(
+                    access_key_id=assumed_role['Credentials']['AccessKeyId'],
+                    secret_access_key=assumed_role['Credentials']['SecretAccessKey'],
+                    session_token=assumed_role['Credentials']['SessionToken'],
+                    expiration_str= assumed_role['Credentials']['Expiration'].isoformat()
+                )
+            except BotoCoreError as e:
+                raise ClientError(f"Failed to assume role {bucket.role_arn}")
+        try:
+            s3 = boto3.client(
+                's3',
+                aws_access_key_id=creds.access_key_id,
+                aws_secret_access_key=creds.secret_access_key,
+                aws_session_token=creds.session_token
+            )
+        except BotoCoreError as e:
+            raise ClientError("Failed to create S3 client: " + str(e))
+
+        try:
+            s3.upload_file(
+                Filename=local_path,
+                Bucket=bucket.bucket_name,
+                Key=bucket_path
+            )
+            if self.verbose:
+                print(f"File {local_path} uploaded to bucket {bucket.bucket_name}")
+        except BotoCoreError as e:
+            raise ClientError(f"Failed to upload file to S3: {str(e)}")
 
 class ClientSettings:
     """ Optional settings that the user can use to control the client MQTT connection behavior"""
@@ -62,7 +285,7 @@ class ClientSettings:
         if verbose:
             from . import __version__ as SDK_VERSION
             from avnet.iotconnect.sdk.sdklib import __version__ as LIB_VERSION
-            print(f"/IOTCONNENCT Lite Client started with version {SDK_VERSION} and Lib version {LIB_VERSION}")
+            print(f"/IOTCONNECT Lite Client started with version {SDK_VERSION} and Lib version {LIB_VERSION}")
         self.verbose = verbose
         self.connect_timeout_secs = connect_timeout_secs
         self.connect_tries = connect_tries
@@ -142,17 +365,22 @@ class Client:
     ):
         self.user_callbacks = callbacks or Callbacks()
         self.settings = settings or ClientSettings()
+        self.config = config
 
-        self.mqtt_config = DeviceRestApi(config.to_properties(), verbose=self.settings.verbose).get_identity_data()  # can raise DeviceConfigError
+        self._dra = DeviceRestApi(
+            config = config.to_properties(),
+            tls_credentials= config.to_tls_credentials(),
+            verbose=self.settings.verbose)
+        self._identity_data = self._dra.get_identity_data()  # can raise DeviceConfigError
 
         self.mqtt = PahoClient(
             callback_api_version=CallbackAPIVersion.VERSION2,
-            client_id=self.mqtt_config.client_id
+            client_id=self._identity_data.client_id
         )
-        # TODO: User configurable with defaults
+        # Investigate if we need to make this configurable:
         self.mqtt.reconnect_delay_set(min_delay=1, max_delay=int(self.settings.connect_timeout_secs / 2 + 1))
         self.mqtt.tls_set(certfile=config.device_cert_path, keyfile=config.device_pkey_path, ca_certs=config.server_ca_cert_path)
-        self.mqtt.username = self.mqtt_config.username
+        self.mqtt.username = self._identity_data.username
 
         self.mqtt.on_message = self._on_mqtt_message
         self.mqtt.on_connect = self._on_mqtt_connect
@@ -160,6 +388,21 @@ class Client:
         self.mqtt.on_publish = self._on_mqtt_publish
 
         self.user_callbacks = callbacks or Callbacks()
+
+        self._kvs_client: Optional[KvsClient] = None
+        self._s3_client: Optional[S3Client] = None
+
+        # If any of these are not available, then the template doesn't enable the features
+        # Most of the devices will not have those supported, so fail silently.
+        try:
+            self._kvs_client = KvsClient(self._dra, self._identity_data)
+        except NotSupportedError:
+            pass
+
+        try:
+            self._s3_client = S3Client(self._dra, self._identity_data)
+        except NotSupportedError:
+            pass
 
     @classmethod
     def timestamp_now(cls) -> datetime:
@@ -192,7 +435,7 @@ class Client:
             try:
                 t = Timing()
                 mqtt_error = self.mqtt.connect(
-                    host=self.mqtt_config.host,
+                    host=self._identity_data.host,
                     port=8883
                 )
                 if mqtt_error != MQTTErrorCode.MQTT_ERR_SUCCESS:
@@ -210,14 +453,14 @@ class Client:
             except (SSLError, TimeoutError, OSError) as ex:
                 # OSError includes socket.gaierror when host could not be resolved
                 # This could also be temporary, so keep trying
-                print("Failed to connect to host %s. Exception: %s" % (self.mqtt_config.host, str(ex)))
+                print("Failed to connect to host %s. Exception: %s" % (self._identity_data.host, str(ex)))
 
             backoff_ms = random.randrange(1000, self.settings.connect_backoff_max_secs * 1000)
             print("Retrying connection... Backing off for %d ms." % backoff_ms)
             # Jitter back off a random number of milliseconds between 1 and 10 seconds.
             time.sleep(backoff_ms / 1000)
 
-        self.mqtt.subscribe(self.mqtt_config.topics.c2d, qos=1)
+        self.mqtt.subscribe(self._identity_data.topics.c2d, qos=1)
 
     def disconnect(self) -> MQTTErrorCode:
         ret = self.mqtt.disconnect()
@@ -226,10 +469,10 @@ class Client:
         return ret
 
     def send_telemetry(self, values: dict[str, TelemetryValueType], timestamp: datetime = None):
-        """ Sends a single telemetry dataset. 
-        If you need gateway/child functionality or need to send multiple value sets in one packet, 
+        """ Sends a single telemetry dataset.
+        If you need gateway/child functionality or need to send multiple value sets in one packet,
         use the send_telemetry_records() method.
-         
+
         :param TelemetryValues values:
             The name-value telemetry pairs to send. Each value can be
                 - a primitive value: Maps directly to a JSON string, number or boolean
@@ -270,7 +513,7 @@ class Client:
         else:
             packet = encode_telemetry_records(records)
             ret = self.mqtt.publish(
-                topic=self.mqtt_config.topics.rpt,
+                topic=self._identity_data.topics.rpt,
                 qos=1,
                 payload=packet
             )
@@ -278,8 +521,106 @@ class Client:
                 print(">", packet)
             return ret
 
+    def s3_upload(self, local_path: str, custom_values: Optional[dict[str, TelemetryValueType]] = None, relative_upload_path: Optional[str] = None):
+        """
+        Upload a file into the default file upload bucket send a telemetry message with the file URL.
 
-    def send_command_ack(self, original_message: C2dCommand, status: int, message_str = None):
+        This method is intended for general use. Use other provided methods if you need more control.
+
+        This will call S3Client.upload_to_bucket() and then send_file_upload_message().
+
+        :param local_path: Path to the local file to upload.
+        :param custom_values: (Optional) Additional telemetry values to send along with the file URL.
+            Do not populate the "url" field in it. The field is reserved.
+            If you populate the "cf" key, the values will appear in /IOTCONNECT Telemetry Files
+            The web UI recognize the file type and show it appropriately.
+            Example:
+                'cf': {
+                    'class': 'dog',
+                    'confidence': 0.700,
+                }
+            or just:
+                'cf': 'dog'
+        :param relative_upload_path: Sub-path in the S3 bucket where the file will be uploaded.
+            This path should not contain the 'device-uploads/<client_id>' (thing name), but have only the relative path after that.
+        """
+        if boto3 is None:
+            raise NotSupportedError("S3: Optional package is required. Install this package with pip3 install iotconnect-lite-sdk[aws-s3]")
+        if self._s3_client is None:
+            raise NotSupportedError("FS support is not enabled for this device. Please ensure to enable it in the device template or ensure to re-create the device after enabling it.")
+
+        bucket = self._s3_client.get_default_bucket()
+        if bucket is None:
+            raise ClientError("No S3 bucket available for file uploads")
+
+        if relative_upload_path is None or len(relative_upload_path) == 0:
+            file_name = Path(local_path).name
+            unix_timestamp = int(datetime.now(timezone.utc).timestamp())
+            relative_upload_path = f"{unix_timestamp}-{file_name}"
+
+        self._s3_client.upload_to_bucket(local_path, f"device-uploads/{self.get_client_id()}/{relative_upload_path}", bucket)
+
+        self.send_file_upload_message(
+            relative_file_upload_path=f"{relative_upload_path}",
+            custom_values=custom_values
+        )
+
+    def send_file_upload_message(self, relative_file_upload_path: str, custom_values: Optional[dict[str, TelemetryValueType]] = None):
+        """
+        Send a file upload MQTT message indicating that a file has been uploaded to the device's S3 bucket.
+        The Telemetry Files tab in the /IOTCONNECT web UI will show the uploaded file accordingly.
+
+        :param relative_file_upload_path: The relative path in the device-uploads S3 bucket where the file was uploaded.
+            This path should not contain the 'device-uploads/<client_id>' (thing name), but have only the relative path after that.
+        :param custom_values: (Optional) Additional telemetry values to send along with the file URL.
+            Do not populate the "url" field in it. The field is reserved.
+            If you populate the "cf" key as value or object, the values will appear in /IOTCONNECT Telemetry Files
+            The web UI recognize the file type and show it appropriately.
+            Example:
+                'cf': {
+                    'class': 'dog',
+                    'confidence': 0.700,
+                }
+            or just:
+                'cf': 'dog'
+        """
+        if relative_file_upload_path is None or len(relative_file_upload_path) == 0:
+            raise ValueError("relative_file_upload_path cannot be empty")
+
+        # the custom values really become the top level telemetry record
+        # with "url" added to it as a special field
+        if custom_values is None:
+            record = dict[str, TelemetryValueType]()
+        else:
+            record = custom_values
+
+        # validate file path to make sure the user did not make some mistake
+        # but only if verbose is enabled?... Maybe the user intended it?
+        if "device-uploads" in relative_file_upload_path:
+            print("Warning: The 'device_uploads' prefix should not generally be included in the relative_file_upload_path")
+        if self.get_duid() in relative_file_upload_path:
+            print("Warning: relative_file_upload_path should not generally contain the device unique ID (DUID)")
+
+        # url goes at top level:
+        if record.get("url") is not None:
+            raise ValueError("The 'url' key in custom_values is reserved and cannot be used in custom_values")
+        record["url"] = relative_file_upload_path
+        records = [TelemetryRecord(record)]
+        if not self.is_connected():
+            print('Message NOT sent. Not connected!')
+            return None
+        else:
+            packet = encode_telemetry_records(records)
+            ret = self.mqtt.publish(
+                topic=self._identity_data.topics.fu,
+                qos=1,
+                payload=packet
+            )
+            if self.settings.verbose:
+                print("file: >", packet)
+            return ret
+
+    def send_command_ack(self, original_message: C2dCommand, status: int, message_str=None):
         """
         Send Command acknowledgement.
 
@@ -306,7 +647,6 @@ class Client:
 
         :param original_message: The original message that was received in the callback.
         :param status: For example: C2dAck.OTA_DOWNLOAD_FAILED.
-        :param message_str: (Optional) For example: "Failed to unzip the OTA package".
         :param message_str: (Optional) For example: "Failed to unzip the OTA package".
         """
         if original_message.type != C2dMessage.OTA:
@@ -339,10 +679,10 @@ class Client:
             if original_command is not None:
                 print('Error: Message ACK ID missing. Ensure to set "Acknowledgement Required" in the template for command %s!' % original_command)
             else:
-                print('Error: Message ACK ID missing. Ensure to set "Acknowledgement Required" in the template the command!' % original_command)
-            return
+                print('Error: Message ACK ID missing. Ensure to set "Acknowledgement Required" in the template the command!')
+            return None
         elif message_type not in (C2dMessage.COMMAND, C2dMessage.OTA):
-            print('Warning: Message type %d does not appear to be a valid message type!' % message_type)  # let it pass, just in case we can still somehow send different kind of ack
+            print('Warning: Message type %d does not appear to be a valid message type!' % message_type) # let it pass, just in case we can still somehow send different kind of ack
         elif message_type == C2dMessage.COMMAND and not C2dAck.is_valid_cmd_status(status):
             print('Warning: Status %d does not appear to be a valid command ACK status!' % status) # let it pass, just in case there is a new status
         elif message_type == C2dMessage.OTA and not C2dAck.is_valid_ota_status(status):
@@ -350,13 +690,22 @@ class Client:
 
         packet = encode_c2d_ack(ack_id, message_type, status, message_str)
         ret = self.mqtt.publish(
-            topic=self.mqtt_config.topics.ack,
+            topic=self._identity_data.topics.ack,
             qos=1,
             payload=packet
         )
         if self.settings.verbose:
             print(">", packet)
         return ret
+
+    def get_duid(self) -> str:
+        """ Convenience method to get device unique ID """
+        return self.config.duid
+
+    def get_client_id(self) -> str:
+        """ Returns MQTT/Client ID (AWS Thing Name on AWS) """
+        return self._identity_data.client_id
+
 
     def _process_c2d_message(self, topic: str, payload: str) -> bool:
         # topic is ignored for now as we only subscribe to one
@@ -367,17 +716,25 @@ class Client:
 
             decoding_result = decode_c2d_message(payload)
             generic_message = decoding_result.generic_message
+
             # if the user wants to handle this message type, stop processing further
             generic_cb = self.user_callbacks.generic_message_callbacks.get(generic_message.type)
             if generic_cb is not None:
                 generic_cb(generic_message, decoding_result.raw_message)
                 return True
 
+            if self.user_callbacks.vs_cb is not None:
+                if generic_message.type in (C2dMessage.START_STREAM, C2dMessage.STOP_STREAM):
+                    print(f"Received {C2dMessage.TYPES.get(generic_message.type)}")
+                    self._kvs_client._is_streaming = generic_message.type == C2dMessage.START_STREAM
+                    self.user_callbacks.vs_cb(self._kvs_client)
+                    return True
+
             if decoding_result.command is not None:
-#               TODO: Deal with runtime qualification
-#               if msg.command_name == 'aws-qualification-start':
-#                    self._aws_qualification_start(msg.command_args)
-#                elif self.user_callbacks.command_cb is not None:
+                # Potential way to deal with runtime qualification, but has issues.
+                # if msg.command_name == 'aws-qualification-start':
+                #     self._aws_qualification_start(msg.command_args)
+                # elif self.user_callbacks.command_cb is not None:
                 if self.user_callbacks.command_cb is not None:
                     self.user_callbacks.command_cb(decoding_result.command)
                 else:
@@ -434,16 +791,16 @@ class Client:
         if len(command_args) >= 1:
             host = command_args[0]
             print("Starting AWS Device Qualification for", host)
-            self.mqtt_config.topics.rpt = 'qualification'
-            self.mqtt_config.topics.c2d = 'qualification'
-            self.mqtt_config.topics.ack = 'qualification'
-            self.mqtt_config.host = host
+            self._identity_data.topics.rpt = 'qualification'
+            self._identity_data.topics.c2d = 'qualification'
+            self._identity_data.topics.ack = 'qualification'
+            self._identity_data.host = host
             self.mqtt.on_log = log_callback
             self.disconnect()
             while True:
                 connected_time = Timing()
                 if not self.is_connected():
-                    print('(re)connecting to', self.mqtt_config.host)
+                    print('(re)connecting to', self._identity_data.host)
                     self.connect()
                     connected_time.reset(False)  # reset the timer
                 else:
@@ -458,3 +815,9 @@ class Client:
 
         else:
             print("Malformed AWS qualification command. Missing command argument!")
+
+    def get_kvs_client(self) -> Optional[KvsClient]:
+        return self._kvs_client
+    
+    def get_s3_client(self) -> Optional[S3Client]:
+        return self._s3_client
