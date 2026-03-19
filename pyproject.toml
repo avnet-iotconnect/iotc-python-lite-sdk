@@ -39,8 +39,8 @@ classifiers = [
     "Topic :: Internet",
 ]
 dependencies = [
-    "iotconnect-lib>=2.0.0,<3.0.0",
-    "paho-mqtt>=2.1.0",
+    "iotconnect-lib>=2.1.0,<3.0.0",
+    "paho-mqtt>=2.1.0,<3.0.0",
 ]
 
 [project.optional-dependencies]

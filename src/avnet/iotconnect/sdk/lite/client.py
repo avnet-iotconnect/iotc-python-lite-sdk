@@ -140,6 +140,7 @@ class KvsClient(AwsCredentialsProvider):
         super().__init__(dra, self.identity_data.vs.url, verbose=verbose)
 
         self._is_auto_start = self.identity_data.vs.as_
+        self._signaling_channel_arn = self.identity_data.vs.carn
         self._is_streaming = self._is_auto_start
 
     def is_auto_start(self) -> bool:
@@ -147,8 +148,11 @@ class KvsClient(AwsCredentialsProvider):
         return self._is_auto_start
 
     def is_streaming(self) -> bool:
-        """ Indicates whether KVS streaming should be started automatically """
+        """ Indicates whether KVS streaming is currently streaming """
         return self._is_streaming
+    def get_signaling_channel_arn(self) -> bool:
+        """ Returns the signaling channel ARN for WebRTC connection to KVS if available."""
+        return self._signaling_channel_arn
 
 
 @dataclass
